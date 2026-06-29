@@ -121,17 +121,23 @@ def generate_launch_description():
     bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
-        name="ros_gz_bridge",
-        output="screen",
         arguments=[
             "/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock",
             "/lidar/points/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked",
             "/imu/data@sensor_msgs/msg/Imu[ignition.msgs.IMU",
-        ],
+            # ★ 核心新增：将 ROS2 端的 geometry_msgs/Twist 控制命令桥接到 Ignition 仿真端
+            "/model/outdoor_bot/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist",
+            # ★ 关节状态桥接：让 RViz2 能看到小车 3D 模型
+            "/world/outdoor_flat_features_world/model/outdoor_bot/joint_state@sensor_msgs/msg/JointState[ignition.msgs.Model",
+            ],
         remappings=[
-            # 将 Ignition 的 /lidar/points/points
-             ('/lidar/points/points', '/velodyne_points'),
+            ('/lidar/points/points', '/velodyne_points'),
+            # ★ 核心重映射：允许在外部通过标准的 /cmd_vel 直接控制小车
+            ('/model/outdoor_bot/cmd_vel', '/cmd_vel'),
+            # ★ 关节状态重映射：RViz2 通过 /joint_states 驱动 TF 模型
+            ('/world/outdoor_flat_features_world/model/outdoor_bot/joint_state', '/joint_states'),
         ],
+        output="screen"
     )
 
     # ------------------------------------------------------------------

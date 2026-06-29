@@ -23,6 +23,11 @@ __pycache__/
 .ignition/
 *.log
 
+# ── Generated map files (PCD, etc.) ────────────────────────
+*.pcd
+*.pgm
+*.yaml
+
 # ── Misc ───────────────────────────────────────────────────
 *.tmp
 *.bak
