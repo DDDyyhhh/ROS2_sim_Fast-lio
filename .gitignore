@@ -1,0 +1,28 @@
+# ── ROS 2 Build Artifacts ─────────────────────────────────
+build/
+install/
+log/
+
+# ── IDE & Editor ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Python ─────────────────────────────────────────────────
+*.pyc
+__pycache__/
+*.pyo
+
+# ── macOS artifacts ────────────────────────────────────────
+.DS_Store
+
+# ── Gazebo / Ignition runtime artifacts ────────────────────
+.gazebo/
+.ignition/
+*.log
+
+# ── Misc ───────────────────────────────────────────────────
+*.tmp
+*.bak

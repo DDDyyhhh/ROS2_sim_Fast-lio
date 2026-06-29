@@ -1,0 +1,154 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="outdoor_bot">
+
+  <!-- ============================================================ -->
+  <!-- 基础常量                                                       -->
+  <!-- ============================================================ -->
+  <xacro:property name="M_PI" value="3.1415926535897931" />
+
+  <!-- ============================================================ -->
+  <!-- Base Link —— 机器人底盘                                        -->
+  <!-- ============================================================ -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.4 0.3 0.15"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0 0 0.8 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.4 0.3 0.15"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="10.0"/>
+      <inertia ixx="0.09" ixy="0.0" ixz="0.0"
+               iyy="0.15" iyz="0.0"
+               izz="0.2"/>
+    </inertial>
+  </link>
+
+  <!-- ============================================================ -->
+  <!-- LiDAR Link —— 物理实体                                        -->
+  <!-- ============================================================ -->
+  <link name="lidar_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.05"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.05"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0"
+               iyy="0.0001" iyz="0.0"
+               izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- IMU Link —— 物理实体                                          -->
+  <!-- ============================================================ -->
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.00001" ixy="0.0" ixz="0.0"
+               iyy="0.00001" iyz="0.0"
+               izz="0.00001"/>
+    </inertial>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- 必须将 Ignition 传感器包裹在 gazebo 标签内，防止被 urdfdom 丢弃 -->
+  <!-- ============================================================ -->
+  
+  <!-- 1. Ignition GPU LiDAR 传感器 (16 线 3D) -->
+  <!-- 1. Mid-360 几何等效 CPU 激光雷达 (360° x 59°  hemispherical FOV) -->
+  <gazebo reference="lidar_link">
+    <!-- 使用高度稳定的 CPU 射线追踪器，完全避免显卡驱动冲突 -->
+    <sensor type="lidar" name="lidar_sensor">
+      <pose>0 0 0.03 0 0 0</pose>
+      <topic>/lidar/points</topic>
+      <ignition_frame_id>lidar_link</ignition_frame_id>
+      <update_rate>10</update_rate>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>400</samples> <!-- 水平采样，RK3588 CPU 运行毫无压力 -->
+            <resolution>1</resolution>
+            <min_angle>-${M_PI}</min_angle> 
+            <max_angle>${M_PI}</max_angle>  
+          </horizontal>
+          <vertical>
+            <samples>64</samples>  <!-- 64线高密度探测，1:1 还原 Mid-360 的立体扫描包络 -->
+            <resolution>1</resolution>
+            <min_angle>-0.122173</min_angle> <!-- -7度 (向下) -->
+            <max_angle>0.907571</max_angle>  <!-- +52度 (向上) -->
+          </vertical>
+        </scan>
+        <range>
+          <min>0.1</min> <!-- 还原 Mid-360 0.1米极小盲区 -->
+          <max>40.0</max> <!-- 还原 Mid-360 40米最大测距 -->
+          <resolution>0.001</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.02</stddev> <!-- 注入高斯噪声，模拟真实的测量抖动 -->
+        </noise>
+      </lidar>
+      <always_on>1</always_on>
+      <visualize>false</visualize>
+    </sensor>
+  </gazebo>
+
+  <!-- 2. Ignition IMU 传感器 (200 Hz，恢复真实 6 轴噪声模型) -->
+  <gazebo reference="imu_link">
+    <sensor type="imu" name="imu_sensor">
+      <topic>/imu/data</topic>
+      <ignition_frame_id>imu_link</ignition_frame_id>
+      <update_rate>200</update_rate>
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+</robot>

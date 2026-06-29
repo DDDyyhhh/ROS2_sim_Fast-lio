@@ -1,0 +1,80 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="outdoor_flat_features_world">
+    
+    <!-- 1. Ignition 核心基础物理与控制系统 -->
+    <plugin filename="libignition-gazebo-physics-system.so" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="libignition-gazebo-user-commands-system.so" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="libignition-gazebo-scene-broadcaster-system.so" name="ignition::gazebo::systems::SceneBroadcaster"/>
+    
+    <!-- 2. 独立加载 IMU 系统 -->
+    <plugin filename="libignition-gazebo-imu-system.so" name="ignition::gazebo::systems::Imu"/>
+    
+    <!-- 3. 加载传感器渲染系统，指定兼容 ARM64 的 ogre 1 引擎 -->
+    <plugin filename="libignition-gazebo-sensors-system.so" name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre</render_engine>
+    </plugin>
+
+    <!-- ========================================================== -->
+    <!-- ★ 核心修复：纯本地硬编码的太阳（不再请求网络）                  -->
+    <!-- ========================================================== -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- ========================================================== -->
+    <!-- ★ 核心修复：纯本地硬编码的平坦地面（不再请求网络）              -->
+    <!-- ========================================================== -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 特征物 1: 巨型箱子 -->
+    <model name="box_feature_1">
+      <static>true</static><pose>5.0 5.0 1.0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>2.0 2.0 2.0</size></box></geometry></collision>
+        <visual name="visual">
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <material><ambient>0.5 0.5 0.5 1</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 特征物 2: 圆柱体 -->
+    <model name="cylinder_feature_2">
+      <static>true</static><pose>-5.0 4.0 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>1.0</radius><length>3.0</length></cylinder></geometry></collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>1.0</radius><length>3.0</length></cylinder></geometry>
+          <material><ambient>0.7 0.3 0.3 1</ambient></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
