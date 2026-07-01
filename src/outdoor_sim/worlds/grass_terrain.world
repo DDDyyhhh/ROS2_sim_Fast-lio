@@ -2,6 +2,12 @@
 <sdf version="1.8">
   <world name="outdoor_flat_features_world">
 
+    <!-- 0. 物理引擎配置：降频至 200Hz，降低 RK3588 CPU 负荷 -->
+    <physics name="fast_physics" type="ignored">
+      <max_step_size>0.005</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
     <!-- 1. Ignition 核心基础物理与控制系统 -->
     <plugin filename="libignition-gazebo-physics-system.so" name="ignition::gazebo::systems::Physics"/>
     <plugin filename="libignition-gazebo-user-commands-system.so" name="ignition::gazebo::systems::UserCommands"/>

@@ -24,10 +24,18 @@ find_package(ament_cmake REQUIRED)
 # 这样 launch 文件、xacro 模型、world 文件才能被 ros2 launch 找到
 # ---------------------------------------------------------------
 install(DIRECTORY
+  config
   launch
   urdf
   worlds
   DESTINATION share/${PROJECT_NAME}
+)
+
+# 安装 Python 节点脚本
+install(PROGRAMS
+  scripts/odom_to_tf.py
+  scripts/clock_filter.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)

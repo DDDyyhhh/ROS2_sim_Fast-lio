@@ -81,8 +81,9 @@ def generate_launch_description():
         executable="robot_state_publisher",
         name="robot_state_publisher",
         output="screen",
+        arguments=['--ros-args', '--log-level', 'ERROR'],
         parameters=[{
-            "use_sim_time": use_sim_time,
+            "use_sim_time": True,  # 硬编码布尔值，避免 LaunchConfiguration 字符串解析问题
             "robot_description": ParameterValue(
                 Command(["xacro", " ", xacro_file]), value_type=str
             ),
@@ -121,23 +122,55 @@ def generate_launch_description():
     bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
+        parameters=[{"use_sim_time": True}],
         arguments=[
             "/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock",
             "/lidar/points/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked",
             "/imu/data@sensor_msgs/msg/Imu[ignition.msgs.IMU",
+            # ★ 里程计桥接：DiffDrive 发布的 Ignition /odom → ROS 2 /odom
+            "/odom@nav_msgs/msg/Odometry[ignition.msgs.Odometry",
             # ★ 核心新增：将 ROS2 端的 geometry_msgs/Twist 控制命令桥接到 Ignition 仿真端
             "/model/outdoor_bot/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist",
             # ★ 关节状态桥接：让 RViz2 能看到小车 3D 模型
             "/world/outdoor_flat_features_world/model/outdoor_bot/joint_state@sensor_msgs/msg/JointState[ignition.msgs.Model",
             ],
         remappings=[
+            # 时钟重定向：Ignition 原生 /clock → /clock_raw
+            # 由 clock_filter 去重滤波后再发布到 /clock
+            ('/clock', '/clock_raw'),
             ('/lidar/points/points', '/velodyne_points'),
             # ★ 核心重映射：允许在外部通过标准的 /cmd_vel 直接控制小车
             ('/model/outdoor_bot/cmd_vel', '/cmd_vel'),
-            # ★ 关节状态重映射：RViz2 通过 /joint_states 驱动 TF 模型
+            # ★ 关节状态桥接：保留在独立 topic（非 /joint_states，避免 robot_state_publisher 收到后触发时间戳回退警告）
             ('/world/outdoor_flat_features_world/model/outdoor_bot/joint_state', '/joint_states'),
         ],
         output="screen"
+    )
+
+    # ------------------------------------------------------------------
+    # 5. 全局时钟滤波器 —— 过滤 UDP 乱序导致的时钟回跳
+    #    订阅 /clock_raw (来自桥接), 发布纯净 /clock
+    # ------------------------------------------------------------------
+    clock_filter_node = Node(
+        package="outdoor_sim",
+        executable="clock_filter.py",
+        name="clock_filter",
+        output="screen",
+        arguments=['--ros-args', '--log-level', 'INFO'],
+        parameters=[{"use_sim_time": True}],
+    )
+
+    # ------------------------------------------------------------------
+    # 6. TF 中继：odom_to_tf —— 将 /odom 位姿实时转发为 /tf
+    #    绕过 ros_gz_bridge 的 TF 桥接后，用此节点持续发布 odom → body TF
+    #    (从 nav2_sim_launch 移至此处的，确保所有世界通用的 TF 需求)
+    # ------------------------------------------------------------------
+    odom_to_tf_node = Node(
+        package="outdoor_sim",
+        executable="odom_to_tf.py",
+        name="odom_to_tf",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
     )
 
     # ------------------------------------------------------------------
@@ -150,4 +183,6 @@ def generate_launch_description():
         robot_state_pub,
         create_entity,
         bridge,
+        clock_filter_node,
+        odom_to_tf_node,
     ])

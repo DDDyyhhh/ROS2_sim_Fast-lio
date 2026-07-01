@@ -217,9 +217,16 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ros2 run fast_lio save_map --save_path /home/orangepi/ros2_ws/my_3d_map.pcd
 
 # 或使用辅助脚本
-python3 save_map.py
+python3 ~/ros2_ws/save_map.py
 ```
 
+### 查看地图
+```bash
+ros2 run pcl_ros pcd_to_pointcloud --ros-args \
+  -p file_name:=/home/orangepi/ros2_ws/my_3d_map.pcd \
+  -p tf_frame:=map \
+  -p publishing_period_ms:=1000
+``` 
 ### 可视化 (RViz2)
 
 ```bash

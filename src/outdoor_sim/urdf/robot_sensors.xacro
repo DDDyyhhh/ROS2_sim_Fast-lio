@@ -105,7 +105,7 @@
       <lidar>
         <scan>
           <horizontal>
-            <samples>400</samples>
+            <samples>900</samples>
             <resolution>1</resolution>
             <min_angle>-${M_PI}</min_angle>
             <max_angle>${M_PI}</max_angle>
@@ -164,13 +164,21 @@
       <right_joint>right_front_wheel_joint</right_joint>
       <right_joint>right_rear_wheel_joint</right_joint>
       
-      <wheel_separation>0.36</wheel_separation> <!-- 轮距 -->
+      <num_wheel_pairs>2</num_wheel_pairs>      <!-- 四驱 → 2 对轮子 -->
+      <wheel_separation>0.58</wheel_separation> <!-- 轮距 (增大以修正自转里程计误差) -->
       <wheel_radius>0.08</wheel_radius>        <!-- 轮子半径 -->
       <odom_publish_frequency>20</odom_publish_frequency> <!-- 里程计发布频率 -->
       
       <!-- 速度命令与里程计话题 -->
       <topic>/model/outdoor_bot/cmd_vel</topic>
       <odom_topic>/odom</odom_topic>
+
+      <!-- ★ TF 发布配置：让 Ignition 的 DiffDrive 发布 odom → body TF -->
+      <tf_topic>/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>body</child_frame_id>
+      <!-- 强制每次里程计更新时同步刷新 TF，避免扫描反向偏转 -->
+      <update_odom_to_tf>false</update_odom_to_tf>
     </plugin>
   </gazebo>
 
