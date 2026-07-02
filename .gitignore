@@ -26,7 +26,8 @@ __pycache__/
 # ── Generated map files (PCD, etc.) ────────────────────────
 *.pcd
 *.pgm
-*.yaml
+# 只排除生成的 map YAML，不排除配置文件
+fastlio_map.yaml
 
 # ── Misc ───────────────────────────────────────────────────
 *.tmp

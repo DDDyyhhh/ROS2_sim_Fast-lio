@@ -5,13 +5,20 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
- ADD_COMPILE_OPTIONS(-std=c++17)
- set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -O3 -mcpu=cortex-a76") 
-  
- add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\") 
-  
- set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions") 
- set(CMAKE_CXX_STANDARD 17) 
+ADD_COMPILE_OPTIONS(-std=c++17)
+# 自适应架构编译参数（PC端与香橙派实车兼顾）
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)")
+  # 💻 PC端 (x86_64) 编译：开启 native 通用或特定指令集加速
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -O3 -march=native")
+else()
+  # 🟢 香橙派 (ARM64) 编译：保持 Cortex-A76 专属硬件优化
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -O3 -mcpu=cortex-a76")
+endif()
+
+add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fexceptions")
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -fexceptions")

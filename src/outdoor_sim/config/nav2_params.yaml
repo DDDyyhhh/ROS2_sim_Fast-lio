@@ -1,0 +1,251 @@
+# Nav2 参数 — 模式 A：纯导航（预建地图 + AMCL）
+# 适配 grassland_50x50.world 大草坪场景
+
+amcl:
+  ros__parameters:
+    use_sim_time: True
+    base_frame_id: "body"
+    odom_frame_id: "odom"
+    global_frame_id: "map"
+    # 大场景 → 增加粒子数以覆盖更大区域
+    max_particles: 3000
+    min_particles: 500
+    # 滑移转向噪声参数
+    alpha1: 1.5  # 旋转旋转噪声
+    alpha2: 1.0  # 旋转平移噪声
+    alpha3: 1.0  # 平移旋转噪声
+    alpha4: 1.5  # 平移平移噪声
+    alpha5: 0.5  # 传感器噪声
+    # 激光模型
+    laser_model_type: "likelihood_field"
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 30.0
+    laser_min_range: 0.5
+    # 更新频率
+    resample_interval: 2
+    update_min_a: 0.5
+    update_min_d: 0.5
+    # 初始位姿
+    initial_pose_x: 0.0
+    initial_pose_y: 0.0
+    initial_pose_z: 0.0
+    initial_pose_a: 0.0
+    set_initial_pose: True
+
+map_server:
+  ros__parameters:
+    use_sim_time: True
+    yaml_filename: "fastlio_map.yaml"
+
+map_saver:
+  ros__parameters:
+    use_sim_time: True
+    save_map_timeout: 5000
+    free_thresh_default: 0.25
+    occupied_thresh_default: 0.65
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: True
+      global_frame: "odom"
+      robot_base_frame: "body"
+      rolling_window: true
+      width: 6.0     # 局部地图 6m × 6m（小车周围）
+      height: 6.0
+      resolution: 0.05
+      # 传感器配置
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: "scan"
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          min_obstacle_height: 0.05
+          obstacle_max_range: 8.0
+          obstacle_min_range: 0.5
+          raytrace_max_range: 8.0
+          raytrace_min_range: 0.0
+          clearing: True
+          marking: True
+          inf_is_valid: True
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.4
+      # 静态层（预建地图）
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      always_send_full_costmap: True
+      # 滤波器
+      static_filter:
+        plugin: "nav2_costmap_2d::StaticFilter"
+      keep_clear:
+        plugin: "nav2_costmap_2d::KeepClearLayer"
+        enabled: False
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: True
+      global_frame: "map"
+      robot_base_frame: "body"
+      # 大场景全局地图 60m × 60m
+      width: 60.0
+      height: 60.0
+      resolution: 0.1  # 全局地图用 0.1m 分辨率（节约内存）
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: "scan"
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          min_obstacle_height: 0.0
+          obstacle_max_range: 15.0
+          obstacle_min_range: 0.5
+          raytrace_max_range: 15.0
+          raytrace_min_range: 0.0
+          clearing: True
+          marking: True
+          inf_is_valid: True
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 8.0
+        inflation_radius: 0.6
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      always_send_full_costmap: True
+
+planner_server:
+  ros__parameters:
+    use_sim_time: True
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5
+      use_astar: True
+      allow_unknown: True
+
+controller_server:
+  ros__parameters:
+    use_sim_time: True
+    controller_plugins: ["FollowPath"]
+    FollowPath:
+      plugin: "nav2_dwb_controller::DWBLocalPlanner"
+      # DWB 自定义参数
+      min_vel_x: 0.0
+      max_vel_x: 0.5       # 割草速度 0.5 m/s
+      min_vel_y: 0.0
+      max_vel_y: 0.0       # 无侧移
+      max_vel_theta: 1.0
+      min_speed_xy: 0.0
+      max_speed_xy: 0.5
+      min_speed_theta: 0.0
+      acc_lim_x: 0.5
+      acc_lim_y: 0.5
+      acc_lim_theta: 1.0
+      # 路径跟踪
+      path_distance_bias: 32.0
+      goal_distance_bias: 24.0
+      rot_stopped_vel: 0.02
+      trans_stopped_vel: 0.02
+      # 目标容差（大场景适当放宽）
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.30
+      # 前视角点采样
+      vx_samples: 20
+      vtheta_samples: 40
+      # 转向行为
+      RotateToGoal:
+        slowing_factor: 2.5
+        rotate_to_goal: True
+      Oscillation:
+        oscillation_timeout: 5.0
+        oscillation_distance: 0.2
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: True
+    default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery.xml"
+    plugin_libraries:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+
+behavior_tree:
+  ros__parameters:
+    use_sim_time: True
+    plugin_libraries:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+
+recoveries_server:
+  ros__parameters:
+    use_sim_time: True
+    plugin_libraries:
+      - nav2_back_up_recovery
+      - nav2_spin_recovery
+    recovery_plugins: ["spin", "back_up"]
+    spin:
+      plugin: "nav2_recoveries/Spin"
+    back_up:
+      plugin: "nav2_recoveries/BackUp"
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: True
+    follow_waypoints: True
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 0.0

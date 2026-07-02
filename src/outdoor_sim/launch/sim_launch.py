@@ -32,7 +32,7 @@ def generate_launch_description():
     # ------------------------------------------------------------------
     # 资源路径
     # ------------------------------------------------------------------
-    world_file = os.path.join(pkg_share, "worlds", "grass_terrain.world")
+    world_file = os.path.join(pkg_share, "worlds", "grassland_50x50.world")
     xacro_file = os.path.join(pkg_share, "urdf", "robot_sensors.xacro")
 
     # ------------------------------------------------------------------
@@ -132,7 +132,7 @@ def generate_launch_description():
             # ★ 核心新增：将 ROS2 端的 geometry_msgs/Twist 控制命令桥接到 Ignition 仿真端
             "/model/outdoor_bot/cmd_vel@geometry_msgs/msg/Twist]ignition.msgs.Twist",
             # ★ 关节状态桥接：让 RViz2 能看到小车 3D 模型
-            "/world/outdoor_flat_features_world/model/outdoor_bot/joint_state@sensor_msgs/msg/JointState[ignition.msgs.Model",
+            "/world/outdoor_grassland_50x50/model/outdoor_bot/joint_state@sensor_msgs/msg/JointState[ignition.msgs.Model",
             ],
         remappings=[
             # 时钟重定向：Ignition 原生 /clock → /clock_raw
@@ -142,7 +142,7 @@ def generate_launch_description():
             # ★ 核心重映射：允许在外部通过标准的 /cmd_vel 直接控制小车
             ('/model/outdoor_bot/cmd_vel', '/cmd_vel'),
             # ★ 关节状态桥接：保留在独立 topic（非 /joint_states，避免 robot_state_publisher 收到后触发时间戳回退警告）
-            ('/world/outdoor_flat_features_world/model/outdoor_bot/joint_state', '/joint_states'),
+            ('/world/outdoor_grassland_50x50/model/outdoor_bot/joint_state', '/joint_states'),
         ],
         output="screen"
     )
@@ -162,16 +162,13 @@ def generate_launch_description():
 
     # ------------------------------------------------------------------
     # 6. TF 中继：odom_to_tf —— 将 /odom 位姿实时转发为 /tf
-    #    绕过 ros_gz_bridge 的 TF 桥接后，用此节点持续发布 odom → body TF
-    #    (从 nav2_sim_launch 移至此处的，确保所有世界通用的 TF 需求)
-    # ------------------------------------------------------------------
-    # odom_to_tf_node = Node(
-    #     package="outdoor_sim",
-    #     executable="odom_to_tf.py",
-    #     name="odom_to_tf",
-    #     output="screen",
-    #     parameters=[{"use_sim_time": True}],
-    # )
+    odom_to_tf_node = Node(
+        package="outdoor_sim",
+        executable="odom_to_tf.py",
+        name="odom_to_tf",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+    )
 
     # ------------------------------------------------------------------
     # 组装 LaunchDescription
@@ -184,5 +181,5 @@ def generate_launch_description():
         create_entity,
         bridge,
         clock_filter_node,
-        # odom_to_tf_node,   # SLAM 模式下由 FAST-LIO 接管 TF
+        odom_to_tf_node,
     ])

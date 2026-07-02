@@ -1,0 +1,209 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /TF1/Frames1
+        - /PointCloud21
+        - /Marker1
+        - /MarkerArray1
+      Splitter Ratio: 0.5
+    Tree Height: 524
+  - Class: rviz_common/Views
+    Name: Views
+    Saved:
+      - Class: rviz_default_plugins/TopDownOrtho
+        Name: Top-down Orthographic
+        Scale:
+          Value: 65
+        Target Frame: map
+        Value: TopDownOrtho (rviz_default_plugins)
+      - Class: rviz_default_plugins/Orbit
+        Distance: 70
+        Focal Point:
+          X: 0
+          Y: 0
+          Z: 0
+        Name: Orbit View
+        Pitch: 0.8
+        Value: Orbit (rviz_default_plugins)
+        Yaw: 3.14
+    Current: TopDownOrtho (rviz_default_plugins)
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 100
+      Reference Frame: map
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        map:
+          odom:
+            body:
+              imu_link:
+                lidar_link:
+              right_front_wheel_joint:
+              right_rear_wheel_joint:
+              left_front_wheel_joint:
+              left_rear_wheel_joint:
+      Update Interval: 0
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: false
+      Axis: Z
+      Channel Name: z
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: RGB8
+      Decay Time: 0
+      Enabled: true
+      Name: LiDAR PointCloud
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.01
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /velodyne_points
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Area Boundary
+      Namespaces:
+        area: true
+      Queue Size: 10
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /coverage/area_markers
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Coverage Path
+      Namespaces:
+        planned_path: true
+        path_arrows: true
+      Queue Size: 10
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /coverage/path_markers
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Execution Status
+      Namespaces:
+        coverage_target: true
+        coverage_done: true
+        coverage_remaining: true
+      Queue Size: 10
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /coverage/execution_markers
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Coverage Map
+      Namespaces:
+        coverage_grid: true
+      Queue Size: 10
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /coverage/coverage_map
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Enabled: true
+      Name: Robot Model
+      Visual Enabled: true
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Depth: 5
+        Queue Size: 10
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Depth: 5
+        Queue Size: 10
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic:
+        Depth: 5
+        Queue Size: 10
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Enable Stereo Rendering: false
+      Name: Current View
+      Scale: 65
+      Target Frame: map
+      Value: TopDownOrtho (rviz_default_plugins)

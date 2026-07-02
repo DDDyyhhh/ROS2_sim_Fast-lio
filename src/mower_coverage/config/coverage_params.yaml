@@ -1,0 +1,33 @@
+# mower_coverage 包参数配置
+
+# 割草机物理参数
+mower:
+  cutting_width: 0.5        # 割幅宽度 (m)，对应 40-60cm 中值
+  overlap_ratio: 0.1        # 重叠比例 (10%)
+  max_speed: 1.0            # 最大行进速度 (m/s)
+  blade_auto_start: true    # 路径执行时自动启动刀盘
+
+# 路径规划参数
+planner:
+  frame_id: "map"
+  path_angle: 0.0           # 路径角度 (弧度)，0 = 沿x轴
+  waypoint_spacing: 0.3     # 路径点采样间距 (m)
+  start_from_corner: true   # 是否从角落开始
+
+# 路径执行参数
+executor:
+  mode: "direct"            # 执行模式: "direct" 或 "nav2"
+  goal_tolerance: 0.3       # 到达目标点的容差 (m)
+  checkpoint_file: "~/coverage_checkpoint.json"  # 断点文件
+
+# 安全参数
+safety:
+  enable_boundary_check: true      # 启用边界检查
+  obstacle_stop_range: 0.5         # 障碍物停障距离 (m)
+  max_angular_speed: 1.0           # 最大角速度 (rad/s)
+  emergency_stop_on_error: true    # 出错时紧急停止
+
+# 可视化参数
+visualization:
+  publish_markers: true       # 发布 RViz Marker
+  marker_lifetime: 5.0        # Marker 生命周期 (秒)
