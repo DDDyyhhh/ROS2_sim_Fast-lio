@@ -165,13 +165,13 @@ def generate_launch_description():
     #    绕过 ros_gz_bridge 的 TF 桥接后，用此节点持续发布 odom → body TF
     #    (从 nav2_sim_launch 移至此处的，确保所有世界通用的 TF 需求)
     # ------------------------------------------------------------------
-    odom_to_tf_node = Node(
-        package="outdoor_sim",
-        executable="odom_to_tf.py",
-        name="odom_to_tf",
-        output="screen",
-        parameters=[{"use_sim_time": True}],
-    )
+    # odom_to_tf_node = Node(
+    #     package="outdoor_sim",
+    #     executable="odom_to_tf.py",
+    #     name="odom_to_tf",
+    #     output="screen",
+    #     parameters=[{"use_sim_time": True}],
+    # )
 
     # ------------------------------------------------------------------
     # 组装 LaunchDescription
@@ -184,5 +184,5 @@ def generate_launch_description():
         create_entity,
         bridge,
         clock_filter_node,
-        odom_to_tf_node,
+        # odom_to_tf_node,   # SLAM 模式下由 FAST-LIO 接管 TF
     ])

@@ -9,7 +9,15 @@
 
 本项目在 **Orange Pi 5 Plus**（RK3588, ARM64）单板计算机上，搭建了一套完整的 **ROS 2 Humble** + **Ignition Fortress** 仿真系统，模拟一台装备 **DJI Mid-360 等效 LiDAR** + **200Hz IMU** 的四驱差速小车，在封闭室内环境中进行 **FAST-LIO SLAM** 建图与 **Nav2 自主导航**。
 
-当前已实现：小车底盘物理仿真、LiDAR/IMU 传感器仿真、ros_gz_bridge 话题桥接、FAST-LIO 实时建图、关节状态发布、**Nav2 导航堆栈完整配置与启动脚本**、PCD→PGM 地图转换工具、/odom→/tf 中继节点。**当前阶段 Nav2 参数已全面调优（AMCL 粒子滤波、DWB 局部规划器、控制器超时），进入端到端仿真验证阶段。**
+当前已实现：
+- 小车底盘物理仿真、LiDAR/IMU 传感器仿真、ros_gz_bridge 话题桥接
+- FAST-LIO 实时建图
+- 关节状态发布、PCD → PGM 地图转换工具、/odom→/tf 中继节点
+- **两种 Nav2 工作模式**：
+  - **模式 A（纯导航）**：预建地图 + AMCL 定位 + Nav2 导航（`nav2_sim_launch.py` + `nav2_params.yaml`）
+  - **模式 B（SLAM+导航）**：未知环境同时 SLAM 建图与 Nav2 导航（`slam_nav2_launch.py` + `nav2_slam_params.yaml`）
+
+**当前阶段：Nav2 参数已为两种模式分别调优，进入端到端仿真验证阶段。**
 
 ---
 
@@ -74,7 +82,7 @@
 │  │  ┌────────────────────────────────┐  │                                    │
 │  │  │ DiffDrivePlugin (skid)         │  │  ← /model/outdoor_bot/cmd_vel     │
 │  │  │  4× continuous joints          │  │                                    │
-│  │  │  wheel_sep: 0.58m (修正自转)         │  │                                    │
+│  │  │  wheel_sep: 0.58m              │  │                                    │
 │  │  │  wheel_radius: 0.08m           │  │                                    │
 │  │  │  odom → /odom @20Hz            │  │                                    │
 │  │  │  TF → /model/outdoor_bot/tf    │  │  (odom→body TF 发布)               │
@@ -109,52 +117,44 @@
 │  /cmd_vel (ROS)                  → /model/outdoor_bot/cmd_vel (Ignition)     │
 │                                                                               │
 │  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │  odom_to_tf.py (scripts/)                                              │    │
-│  │  订阅 /odom → 重新广播为 /tf (odom→body)                               │    │
-│  │  ⚠️ 备选方案：当桥接的 /tf 不更新时使用                                  │    │
+│  │  模式 A: 纯导航 (nav2_sim_launch.py)                                 │    │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │    │
+│  │  │  pointcloud_to_laserscan → /scan                              │  │    │
+│  │  │  pcd_publisher (pcl_ros, 离线 PCD → /pcl_ros/pcd/points)     │  │    │
+│  │  │  Nav2 bringup (map_server + AMCL + planner + controller + BT) │  │    │
+│  │  │  RViz2 (Navigation 2 Panel)                                   │  │    │
+│  │  └────────────────────────────────────────────────────────────────┘  │    │
 │  └──────────────────────────────────────────────────────────────────────┘    │
 │                                                                               │
 │  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │                   FAST-LIO SLAM 节点                                  │    │
-│  │  /velodyne_points + /imu/data → odometry → /Odometry                │    │
-│  │                                     TF: map ← odom                   │    │
-│  │                                     → /fastlio_mapping/global_map    │    │
+│  │  模式 B: SLAM+导航 (slam_nav2_launch.py)                             │    │
+│  │  ┌────────────────────────────────────────────────────────────────┐  │    │
+│  │  │  map → odom → camera_init (static TF, 桥接 FAST-LIO 体系)     │  │    │
+│  │  │  FAST-LIO SLAM (实时里程计, map←odom TF)                      │  │    │
+│  │  │  pointcloud_to_laserscan → /scan                              │  │    │
+│  │  │  Nav2 纯导航 (navigation_launch.py, 无 AMCL/map_server)        │  │    │
+│  │  │  RViz2 (Navigation 2 Panel)                                   │  │    │
+│  │  └────────────────────────────────────────────────────────────────┘  │    │
+│  │                                                                        │    │
+│  │  TF 树:                                                                │    │
+│  │    map ──(static)──→ odom ──(static)──→ camera_init ──(FAST-LIO)──→ body │    │
+│  │             (Nav2 global)      (FAST-LIO 里程计根帧)                       │    │
 │  └──────────────────────────────────────────────────────────────────────┘    │
 │                                                                               │
 │  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │              robot_state_publisher                                   │    │
-│  │  URDF/xacro → /tf_static (body, lidar_link, imu_link, 4 wheels)     │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                               │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │              Nav2 导航堆栈 (nav2_sim_launch.py)                        │    │
-│  │                                                                        │    │
-│  │  pointcloud_to_laserscan_node                                          │    │
-│  │    /velodyne_points → /scan (LaserScan, 360°, 10Hz)                   │    │
-│  │                                                                        │    │
-│  │  pcd_to_pointcloud (pcl_ros)                                           │    │
-│  │    离线 PCD 文件 → /pcl_ros/pcd/points (PointCloud2, 5s间隔)           │    │
-│  │                                                                        │    │
-│  │  Nav2 Bringup (map_server, AMCL, planner, controller, BT)              │    │
-│  │    ├── map_server: 加载 fastlio_map.yaml/pgm → /map                    │    │
-│  │    ├── AMCL: /scan + /tf → 粒子滤波定位 → map→odom TF                  │    │
-│  │    ├── planner_server: NavFn 全局规划                                   │    │
-│  │    ├── controller_server: DWB 局部规划 (滑移转向适配)                   │    │
-│  │    ├── behavior_server: spin/backup/wait 行为                          │    │
-│  │    └── bt_navigator: 导航行为树                                        │    │
-│  │                                                                        │    │
-│  │  RViz2 + Navigation 2 Panel                                            │    │
-│  │    2D Pose Estimate / 2D Nav Goal 交互                                 │    │
+│  │  odom_to_tf.py (scripts/) —备用 TF 中继                               │    │
+│  │  订阅 /odom → 重新广播为 /tf (odom→body)                              │    │
+│  │  ⚠️ SLAM 模式下已禁用 (FAST-LIO 接管 TF 发布)                         │    │
 │  └──────────────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 4.2 TF 树
 
-**当前结构（使用 FAST-LIO 建图时）：**
+**模式 A — 纯导航（预建地图 + AMCL）：**
 ```
 map
-  └── odom (由 FAST-LIO /odom 里程计提供)
+  └── odom (由 AMCL 粒子滤波发布)
         └── body (由 robot_state_publisher /tf_static 发布)
               ├── lidar_link   (fixed, z=0.1)
               ├── imu_link     (fixed, z=0.1)
@@ -164,20 +164,14 @@ map
               └── right_rear_wheel_joint
 ```
 
-**Nav2 模式下（AMCL 接管全局定位）：**
+**模式 B — SLAM+导航（FAST-LIO 实时里程计）：**
 ```
-map
-  └── odom (由 AMCL 粒子滤波发布)
-        └── body (由 robot_state_publisher /tf_static 发布)
-              └── ...同上...
+map ──(static)──→ odom ──(static)──→ camera_init ──(FAST-LIO)──→ body
+                         (Nav2 global)      (FAST-LIO 里程计根帧)
 ```
-
-**重要说明：**
-- `map → odom` 在 FAST-LIO 模式下由 FAST-LIO 直接发布
-- `map → odom` 在 Nav2 模式下由 AMCL 发布（接管全局定位）
-- `odom → body` 在 Ignition 侧由 DiffDrive 插件发布到 `/model/outdoor_bot/tf`，通过 ros_gz_bridge 桥接到 ROS 2 `/tf`
-- 如果桥接的 `/tf` 不更新，备用方案是 `odom_to_tf.py` 脚本（订阅 `/odom` 重新广播为 `/tf`）
-- **Nav2 AMCL 需要 `odom` → `body` 链条完整才能正常工作**
+- `map → odom`：Nav2 全局代价地图的全局帧，静态发布
+- `odom → camera_init`：桥接 FAST-LIO 使用的里程计根帧命名
+- `camera_init → body`：FAST-LIO 实时发布的里程计变换
 
 ### 4.3 机器人参数
 
@@ -204,10 +198,8 @@ map
 | `/imu/data` | Ignition → ROS | `/imu/data` | `sensor_msgs/Imu` | SLAM 输入 |
 | `/odom` | Ignition → ROS | `/odom` | `nav_msgs/Odometry` | 里程计 (DiffDrive) |
 | `/model/outdoor_bot/tf` | Ignition → ROS | `/tf` | `tf2_msgs/TFMessage` | odom→body TF |
-| `/world/.../joint_state` | Ignition → ROS | `/joint_states` | `sensor_msgs/JointState` | RViz 车轮转动 (robot_state_publisher 可读取) |
+| `/world/.../joint_state` | Ignition → ROS | `/joint_states` | `sensor_msgs/JointState` | RViz 车轮转动 |
 | `/model/outdoor_bot/cmd_vel` | ROS → Ignition | `/cmd_vel` | `geometry_msgs/Twist` | 速度控制 |
-
-**注意：** 关节状态话题 remap 到 `/joint_states`，让 robot_state_publisher 可以读取轮子关节角度，在 RViz2 中渲染轮子转动。
 
 ---
 
@@ -218,7 +210,7 @@ map
 | 参数 | 值 | 说明 |
 |------|-----|------|
 | `lidar_type` | 2 | Velodyne/PointCloud2 输入 |
-| `scan_line` | 32 | 匹配 32 线雷达（xacro 已设为 32） |
+| `scan_line` | 32 | 匹配 32 线雷达 |
 | `point_filter_num` | 3 | 每 3 个点采 1 个（降采样） |
 | `filter_size_surf` | 0.15 | 面特征滤波尺寸 |
 | `filter_size_map` | 0.15 | 地图体素滤波尺寸 |
@@ -227,15 +219,24 @@ map
 | `extrinsic_est_en` | false | 关闭在线估计 |
 | `time_sync_en` | false | 仿真时钟完美对齐 |
 | `con_est_en` | false | 仿真无运动畸变 |
-| `max_iteration` | 3 | 迭代次数（兼顾精度与性能）|
+| `max_iteration` | 3 | 迭代次数（兼顾精度与性能） |
 
 ---
 
 ## 七、Nav2 集成现状
 
-### 7.1 已完成的工作
+### 7.1 两种工作模式概述
 
-Nav2 集成已进入参数调优完成阶段，以下组件已就绪：
+Nav2 集成提供两种互补的工作模式：
+
+| 模式 | 启动文件 | 参数文件 | 适用场景 | 定位方式 |
+|------|---------|---------|---------|---------|
+| **A: 纯导航** | `nav2_sim_launch.py` | `nav2_params.yaml` | 已知环境，需要精确导航 | AMCL 粒子滤波 + 预建地图 |
+| **B: SLAM+导航** | `slam_nav2_launch.py` | `nav2_slam_params.yaml` | 未知环境探索 | FAST-LIO 实时里程计 |
+
+### 7.2 模式 A：纯导航（已就绪）
+
+#### 组件清单
 
 | 组件 | 文件 | 状态 |
 |------|------|------|
@@ -243,7 +244,7 @@ Nav2 集成已进入参数调优完成阶段，以下组件已就绪：
 | **Nav2 启动脚本** | `launch/nav2_sim_launch.py` | ✅ 已编写 |
 | **RViz Nav2 面板** | `config/nav2_3d_view.rviz` | ✅ 已配置 |
 | **PCD→PGM 转换工具** | `pcd_to_pgm.py` (项目根目录) | ✅ 已编写 |
-| **/odom→/tf 中继** | `scripts/odom_to_tf.py` | ✅ 已安装（含 reverse_yaw SE(2) 镜像修复） |
+| **/odom→/tf 中继** | `scripts/odom_to_tf.py` | ✅ 已安装（SLAM 模式下禁用） |
 | **全局时钟滤波器** | `scripts/clock_filter.py` | ✅ 已安装（支持仿真重启时间回跳） |
 | **代价地图膨胀层** | nav2_params.yaml 中配置 | ✅ 已配置 |
 | **PointCloud→LaserScan** | nav2_sim_launch.py 中启动 | ✅ 已集成 |
@@ -253,13 +254,8 @@ Nav2 集成已进入参数调优完成阶段，以下组件已就绪：
 | **AMCL 自动初始化** | nav2_params.yaml | ✅ set_initial_pose=True, initial_pose=[0,0,0.26] |
 | **DWB 终点超时修复** | nav2_params.yaml | ✅ slowing_factor=2.5, min_speed_theta=0.25, yaw_tolerance=0.30 |
 | **控制器耐心窗口** | nav2_params.yaml | ✅ movement_time_allowance=15s |
-| **桥接启动加固** | launch/sim_launch.py | ✅ use_sim_time 齐全 + 日志过滤
 
-### 7.2 Nav2 参数配置详解 (`config/nav2_params.yaml`)
-
-#### 全局定位 — AMCL
-
-采用 **选项 2**（AMCL 粒子滤波），关键参数：
+#### AMCL 定位参数
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
@@ -279,17 +275,17 @@ Nav2 集成已进入参数调优完成阶段，以下组件已就绪：
 | `alpha3` | 0.4 | 直行→位移噪声 |
 | `alpha4` | **1.5** | 旋转→位移噪声（"自转时完全依赖雷达"）|
 | `laser_model_type` | `likelihood_field` | 激光观测模型（比 beam 模型快） |
-| `scan_topic` | `/scan` | 激光输入（来自 pointcloud_to_laserscan） |
+| `scan_topic` | `/scan` | 激光输入 |
 
-#### 局部规划 — DWB (滑移转向适配)
+#### DWB 局部规划器参数
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
 | `max_vel_x` | 0.5 m/s | 最高线速度 |
 | `max_vel_y` | **0.0** | 差速底盘无 y 向速度 |
 | `max_vel_theta` | 1.0 rad/s | 最高角速度 |
-| `min_speed_theta` | **0.25** | 原地自旋最小转速（提供足够扭矩克服滑移摩擦）|
-| `yaw_goal_tolerance` | **0.30** | 终点角度容差放宽~17°，容忍滑移误差 |
+| `min_speed_theta` | **0.25** | 原地自旋最小转速 |
+| `yaw_goal_tolerance` | **0.30** | 终点角度容差放宽~17° |
 | `vx_samples` | 20 | 线速度采样 |
 | `vtheta_samples` | 20 | 角速度采样 |
 | `sim_time` | 1.7 s | 轨迹模拟时长 |
@@ -298,7 +294,7 @@ Nav2 集成已进入参数调优完成阶段，以下组件已就绪：
 
 | Critic | 权重 | 作用 |
 |--------|------|------|
-| `BaseObstacle` | 0.02 | 障碍物避碰（权重低，因为 DWB 在滑移转向下转弯半径大） |
+| `BaseObstacle` | 0.02 | 障碍物避碰（权重低，大转弯半径滑移） |
 | `PathAlign` | 10.0 | 路径对齐 |
 | `GoalAlign` | 16.0 | 目标对齐 |
 | `PathDist` | 32.0 | 路径距离 |
@@ -310,7 +306,7 @@ Nav2 集成已进入参数调优完成阶段，以下组件已就绪：
 
 | 参数 | 值 | 说明 |
 |------|-----|------|
-| `movement_time_allowance` | **15.0 s** | 终点调向超时窗口延长，避免 `Controller patience exceeded` abort |
+| `movement_time_allowance` | **15.0 s** | 终点调向超时窗口延长 |
 
 #### 代价地图
 
@@ -323,20 +319,52 @@ Nav2 集成已进入参数调优完成阶段，以下组件已就绪：
 | **膨胀半径** | 0.35 m | 0.25 m |
 | **Footprint** | `[[-0.2,-0.15], [-0.2,0.15], [0.2,0.15], [0.2,-0.15]]` | 同左 |
 
-#### 全局规划 — NavFn
+### 7.3 模式 B：SLAM+导航（新引入）
 
-| 参数 | 值 |
-|------|-----|
-| `plugin` | `nav2_navfn_planner/NavfnPlanner` |
-| `tolerance` | 0.5 m |
-| `use_astar` | false (使用 NavFn，比 A* 快) |
-| `allow_unknown` | true |
+**启动文件：** `launch/slam_nav2_launch.py`
 
-### 7.3 PCD → PGM 地图转换工具 (`pcd_to_pgm.py`)
+#### 设计思路
+
+不同于先建图后导航的传统两步式流程，模式 B 同时运行 FAST-LIO SLAM 和 Nav2：
+1. **FAST-LIO** 提供实时里程计和全局地图（`map → camera_init → body`）
+2. **Nav2** 使用 SLAM 构建的动态地图做实时避障和路径规划
+3. **全局代价地图**采用 100×100m 大画布 + rolling obstacle layer（随车移动的障碍物层保留在全局画布上）
+4. **无 AMCL**（SLAM 已提供定位）、**无 map_server**（无预加载地图）
+
+#### TF 桥接
+
+FAST-LIO 的里程计根帧名为 `camera_init`，通过两层静态 TF 融入 Nav2 体系：
+```
+map ──(static)──→ odom ──(static)──→ camera_init ──(FAST-LIO)──→ body
+```
+- `map → odom`：静态零变换，所有 FAST-LIO 输出天然在 map 系中
+- `odom → camera_init`：桥接命名差异
+
+#### 参数差异对比
+
+| 参数 | 模式 A (nav2_params.yaml) | 模式 B (nav2_slam_params.yaml) | 说明 |
+|------|--------------------------|-------------------------------|------|
+| **全局代价地图尺寸** | 10×10m | 100×100m | 探索模式需要大画布 |
+| **全局代价地图类型** | static_map + inflation | obstacle_layer + inflation | 无预加载地图，雷达实时建图 |
+| **AMCL** | 有（粒子滤波） | **无** | SLAM 已提供定位 |
+| **map_server** | 有（加载 PGM） | **无** | SLAM 无需预建地图 |
+| **全局 rolling_window** | false | false | 保留全部探索轨迹 |
+| **AMCL alpha1/alpha4** | 1.5 (高噪声) | **0.5** (SLAM 里程计更准) | FAST-LIO 里程计比轮式里程计精确 |
+| **AMCL update_min_a** | 0.12 (~6.8°) | **0.40 (~23°)** | 大掉头转完再收敛，降 CPU |
+| **DWB min_vel_x** | 0.0 | **-0.15** | 允许 DWB 倒车微调，防 BT backup |
+| **vtheta_samples** | 20 | **41** | 单数确保零值被采集 |
+| **min_speed_theta** | 0.25 | **0.18** | SLAM 模式降低转速要求 |
+| **min_speed_xy** | (无) | **0.08** | 强制起步阈值克服摩擦力 |
+| **xy_goal_tolerance** | (控制器 0.25) | **0.50** | 大转弯漂移容差翻倍 |
+| **yaw_goal_tolerance** | 0.30 (~17°) | **0.45 (~25°)** | 果断刹停防抖动 |
+| **rotate_to_heading** | (per DWB default) | **false** | 关闭原地先对齐，大转弯弧线通过 |
+| **rot_stopped_velocity** | (无) | **0.25** | 放宽旋转刹停判定 |
+
+### 7.4 PCD → PGM 地图转换工具 (`pcd_to_pgm.py`)
 
 **位置：** 项目根目录 `/home/orangepi/ros2_ws/pcd_to_pgm.py`
 
-将 FAST-LIO 保存的 `.pcd` 3D 点云地图转换为 Nav2 可用的 2D 栅格地图：
+将 FAST-LIO 保存的 `.pcd` 3D 点云地图转换为 Nav2 可用的 2D 栅格地图（用于模式 A）：
 
 ```
 my_3d_map.pcd (FAST-LIO 保存)
@@ -351,33 +379,21 @@ fastlio_map.pgm + fastlio_map.yaml (Nav2 map_server 加载)
 - 障碍物膨胀半径 = 0.25 m（机器人半径）
 - 投影方式：高度切片 + floodFill 空闲区域标注
 
-**输出文件示例 (`fastlio_map.yaml`)：**
-```yaml
-image: fastlio_map.pgm
-mode: trinary
-resolution: 0.05
-origin: [x_min, y_max, 0.0]
-negate: 0
-occupied_thresh: 0.65
-free_thresh: 0.25
-```
-
-### 7.4 Odom→TF 中继 (`scripts/odom_to_tf.py`)
+### 7.5 Odom→TF 中继 (`scripts/odom_to_tf.py`)
 
 **背景：** Ignition DiffDrive 通过 `<update_odom_to_tf>true</update_odom_to_tf>` 在 Ignition 内发布 Pose_V 到 `/tf` 话题，经 ros_gz_bridge 桥接到 ROS 2。实测中发现桥接后的 TF 可能不更新（卡在初始化位姿）。
 
 **解决方案：** `odom_to_tf.py` 直接订阅 `/odom`（nav_msgs/Odometry，以 20Hz 正常更新），将位姿重新广播为 ROS 2 TF（`odom` → `body`），绕过桥接层卡顿。
 
-**SE(2) 镜像修复：** 内置 `REVERSE_YAW` 开关（当前 `False`）。若 DiffDrive 里程计自转方向反向，设为 `True` 后同时对四元数取共轭且翻转 Y 轴位移，保持右手坐标系一致性，解决 DWB `No valid trajectories` 问题。
+**当前状态：**
+- `sim_launch.py` 中已将 `odom_to_tf_node` **注释掉**（SLAM 模式下由 FAST-LIO 接管 TF 发布）
+- 模式 A（纯导航）中如需使用，可手动启动
+- 内置 `REVERSE_YAW` 开关（当前 `False`）
+- 时间戳鲁棒性：过滤 >1s 回退视为仿真重启并重新同步
 
-**时间戳鲁棒性：** 过滤 >1s 回退视为仿真重启并重新同步，防止 TF 树死锁。
+### 7.6 启动流程
 
-**启动方式：** 已在 sim_launch.py 中自动启动，`use_sim_time=True`。也可单独运行：
-```bash
-ros2 run outdoor_sim odom_to_tf.py
-```
-
-### 7.5 Nav2 启动流程
+#### 模式 A：纯导航（预建地图 + AMCL + Nav2）
 
 ```bash
 # 终端 1：启动仿真（Headless）
@@ -401,45 +417,59 @@ python3 ~/ros2_ws/pcd_to_pgm.py
 ros2 launch outdoor_sim nav2_sim_launch.py
 ```
 
-### 7.6 Nav2 启动文件详解 (`launch/nav2_sim_launch.py`)
+#### 模式 B：SLAM+导航（未知环境探索，一键启动）
 
-启动文件包含三个主要部分：
+```bash
+# 终端 1：启动仿真（Headless）
+export LIBGL_ALWAYS_SOFTWARE=1
+xvfb-run -a ros2 launch outdoor_sim sim_launch.py
 
-1. **pointcloud_to_laserscan** 节点
-   - 输入：`/velodyne_points` (PointCloud2)
-   - 输出：`/scan` (LaserScan, 360°, 10Hz)
-   - Z轴滤波：0.1~1.0m（滤除地面和天花板）
-   - 角度分辨率：0.0087 rad (~5°)
+# 等待仿真稳定后（5-10秒）
+# 终端 2：同时启动 FAST-LIO + Nav2 + RViz2
+ros2 launch outdoor_sim slam_nav2_launch.py
 
-2. **pcd_publisher** (pcl_ros `pcd_to_pointcloud`)
-   - 输入：`~/ros2_ws/my_3d_map.pcd`（离线文件）
-   - 输出：`/pcl_ros/pcd/points` (PointCloud2)
-   - 发布间隔：5000ms（节省 CPU）
-   - QoS：`best_effort`
+# 用 RViz2 的 2D Nav Goal 下达导航目标
+# FAST-LIO 实时建图，Nav2 实时避障规划
+```
 
-3. **Nav2 bringup** (nav2_bringup `bringup_launch.py`)
-   - `slam=False`（使用已有地图）
-   - `map=fastlio_map.yaml`
-   - `params_file=nav2_params.yaml`
+### 7.7 模式 B 启动文件详解 (`launch/slam_nav2_launch.py`)
 
-4. **Nav2 RViz2** (nav2_bringup `rviz_launch.py`)
-   - 带 Navigation 2 面板（2D Pose Estimate + 2D Nav Goal）
+启动文件包含六个部分：
 
-### 7.7 ARM64/RK3588 特定约束
+1. **静态 TF 桥接**（`map → odom` + `odom → camera_init`）
+   - 将 FAST-LIO 的 `camera_init` 里程计融入 Nav2 的 `map/odom` 体系
+   - 使用 `static_transform_publisher`，零变换
+
+2. **FAST-LIO SLAM**（`fast_lio/mapping.launch.py`）
+   - 传入 `mid360_sim.yaml` 的绝对路径，防止工作目录依赖
+   - `use_sim_time=true`
+
+3. **PointCloud→LaserScan**（与模式 A 相同）
+   - 输入：`/velodyne_points` → 输出：`/scan`
+   - Z轴滤波 0.1~1.0m，360°，10Hz
+
+4. **Nav2 纯导航**（`nav2_bringup/navigation_launch.py`）
+   - 仅启动 planner + controller + BT navigator
+   - **无 AMCL**、**无 map_server**
+   - 使用 `nav2_slam_params.yaml`
+
+5. **RViz2**（`nav2_bringup/rviz_launch.py`）
+   - 带 Navigation 2 面板
+
+### 7.8 ARM64/RK3588 特定约束
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                     🚨 ARM64 部署警告 🚨                                 │
 │                                                                          │
-│  1. Nav2 参数适配                                                       │
-│     · robot_base_frame = "body"（不是 base_link，已全部对齐）            │
-│     · AMCL 粒子数降为 2000（默认 5000 对 RK3588 太高）                   │
-│     · costmap 更新频率降低（全局 1Hz，局部 5Hz）                         │
+│  1. 机器人 frame 对齐                                                   │
+│     · robot_base_frame = "body"（不是 base_link，所有配置已对齐）        │
+│     · AMCL 粒子数降为 2000（模式 A；模式 B 无 AMCL）                    │
 │                                                                          │
 │  2. QoS 一致性                                                          │
 │     · FAST-LIO 使用 BEST_EFFORT 接收 LiDAR/IMU                          │
-│     · Nav2 costmap 的 obstacle_layer 默认订阅 /scan（可配置 QoS）         │
-│     · pointcloud_to_laserscan 使用 use_sim_time=true                     │
+│     · Nav2 costmap obstacle_layer 订阅 /scan，配置 expected_qos=BEST    │
+│     · pointcloud_to_laserscan 使用 use_sim_time=true                    │
 │                                                                          │
 │  3. 仿真时间 vs 真实时间                                                 │
 │     · 所有 Nav2 参数中 use_sim_time=True                                 │
@@ -448,15 +478,19 @@ ros2 launch outdoor_sim nav2_sim_launch.py
 │  4. 点云数据量                                                          │
 │     · 32 线 × 900 点每线 = 28,800 点/帧，对 RK3588 可接受               │
 │     · pointcloud_to_laserscan 进一步降采样为 LaserScan                   │
-│     · PCD 发布周期设为 5s，避免 CPU 过载                                 │
 │                                                                          │
-│  5. 内存预算                                                             │
+│  5. 模式 B 特有注意事项                                                  │
+│     · FAST-LIO 无回环检测，长时间运行地图会漂移                          │
+│     · global_costmap 100×100m 配合 obstacle_layer，不设 static_map      │
+│     · 全局代价地图 frame 是 map（不是 odom），SLAM 里程计质量决定效果     │
+│                                                                          │
+│  6. 内存预算                                                             │
 │     · Ignition Fortress (server only): ~600MB                           │
 │     · FAST-LIO SLAM: ~200-400MB                                          │
 │     · Nav2 全套: ~200-300MB                                              │
 │     · 总计约 1.2-1.5 GB，16GB 绰绰有余                                   │
 │                                                                          │
-│  6. 渲染引擎                                                             │
+│  7. 渲染引擎                                                             │
 │     · 世界文件使用 <render_engine>ogre</render_engine> 而非 ogre2        │
 │     · ogre2 在 Mali-G610 上 segfault                                     │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -476,15 +510,18 @@ ros2 launch outdoor_sim nav2_sim_launch.py
 │   │   │   └── robot_sensors.xacro           # 机器人 URDF (32线 LiDAR + 200Hz IMU)
 │   │   ├── launch/
 │   │   │   ├── sim_launch.py                 # 主仿真启动文件
-│   │   │   └── nav2_sim_launch.py            # Nav2 导航启动文件 ★新增
+│   │   │   ├── nav2_sim_launch.py            # Nav2 纯导航启动 (模式 A)
+│   │   │   └── slam_nav2_launch.py           # SLAM+导航联合启动 (模式 B) ★新增
 │   │   ├── config/
-│   │   │   ├── nav2_params.yaml              # Nav2 完整参数配置 ★新增
-│   │   │   └── nav2_3d_view.rviz             # Nav2 RViz 配置 ★新增
+│   │   │   ├── nav2_params.yaml              # Nav2 纯导航参数 (模式 A)
+│   │   │   ├── nav2_slam_params.yaml         # Nav2 SLAM+导航参数 (模式 B) ★新增
+│   │   │   └── nav2_3d_view.rviz             # Nav2 RViz 配置
 │   │   ├── rviz/
-│   │   │   └── nav2_default.rviz             # 默认 RViz 配置 ★新增
+│   │   │   └── nav2_default.rviz             # 默认 RViz 配置
 │   │   ├── scripts/
-│   │   │   └── odom_to_tf.py                 # /odom→/tf 中继节点 ★新增
-│   │   ├── CMakeLists.txt                    # 安装配置 (含新目录)
+│   │   │   ├── odom_to_tf.py                 # /odom→/tf 中继节点
+│   │   │   └── clock_filter.py               # 仿真时钟回跳滤波器
+│   │   ├── CMakeLists.txt                    # 安装配置
 │   │   └── package.xml                       # 依赖声明
 │   │
 │   └── FAST_LIO_ROS2/                        # SLAM 建图包
@@ -494,7 +531,7 @@ ros2 launch outdoor_sim nav2_sim_launch.py
 │       ├── include/                          # 头文件
 │       └── package.xml
 │
-├── pcd_to_pgm.py                             # PCD → PGM 地图转换工具 ★新增
+├── pcd_to_pgm.py                             # PCD → PGM 地图转换工具
 ├── CLAUDE.md                                 # 项目规则文档
 ├── project_overview_for_gemini.md            ← 本文件
 └── (build/, install/, log/ — 均为 gitignored)
@@ -514,34 +551,28 @@ source ~/ros2_ws/install/setup.bash
 export LIBGL_ALWAYS_SOFTWARE=1
 xvfb-run -a ros2 launch outdoor_sim sim_launch.py
 
-# ── 2. 启动 FAST-LIO SLAM 建图 ─────────────────────────────
+# ── 2. 模式 A：纯导航（预建地图 + AMCL） ───────────────────
+#   先建图：
 ros2 launch fast_lio mapping.launch.py config:=mid360_sim.yaml
-
-# ── 3. 控制小车建图 ────────────────────────────────────────
 ros2 topic pub /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}, angular: {z: 0.2}}"
-
-# ── 4. 保存 PCD 地图 ───────────────────────────────────────
 ros2 run fast_lio save_map --save_path ~/ros2_ws/my_3d_map.pcd
-
-# ── 5. PCD → PGM 转换 ─────────────────────────────────────
 python3 ~/ros2_ws/pcd_to_pgm.py
-
-# ── 6. 启动 Nav2 导航（需在仿真运行的基础上） ──────────────
-# 先关闭 FAST-LIO（Ctrl+C），再启动 Nav2
+#   再导航（关掉 FAST-LIO）：
 ros2 launch outdoor_sim nav2_sim_launch.py
 
-# ── 7. 检查话题 ────────────────────────────────────────────
+# ── 3. 模式 B：SLAM+导航（未知环境探索） ───────────────────
+#   仿真运行后，一个命令同时启动 FAST-LIO + Nav2：
+ros2 launch outdoor_sim slam_nav2_launch.py
+
+# ── 4. 检查话题 ────────────────────────────────────────────
 ros2 topic list
 ros2 topic hz /velodyne_points
 ros2 topic hz /imu/data
 ros2 topic hz /odom
-ros2 topic echo /scan  # Nav2 启动后检查
+ros2 topic echo /scan
 
-# ── 8. 查看 TF 树 ──────────────────────────────────────────
+# ── 5. 查看 TF 树 ──────────────────────────────────────────
 ros2 run tf2_tools view_frames
-
-# ── 9. 单独运行 odom→tf 中继 ───────────────────────────────
-ros2 run outdoor_sim odom_to_tf.py
 ```
 
 ---
@@ -555,27 +586,38 @@ ros2 run outdoor_sim odom_to_tf.py
 | 3 | 室内 10m×10m 封闭环境 | ✅ 已实现 | 四面墙 + 天花板 + 3 柱子 |
 | 4 | FAST-LIO 外参标定 | ✅ 已修正 | extrinsic_T=[0,0,0.03] |
 | 5 | 没有 2D 地图供 Nav2 | ✅ 工具已就绪 | `pcd_to_pgm.py` 可将 PCD 转 OccupancyGrid |
-| 6 | 没有 /scan 话题 | ✅ 已解决 | nav2_sim_launch.py 中已集成 pointcloud_to_laserscan |
-| 7 | 轮式里程计漂移大 | ✅ 已抑制 | AMCL alpha1=1.5/alpha4=1.5 强制信任雷达；wheel_sep 0.36→0.58 修正自转误差 |
+| 6 | 没有 /scan 话题 | ✅ 已解决 | pointcloud_to_laserscan 已集成 |
+| 7 | 轮式里程计漂移大 | ✅ 已抑制 | AMCL 噪声模型调优 (alpha1/4)；模式 B 使用 FAST-LIO |
 | 8 | 没有回环检测 | ⚠️ 已知 | FAST-LIO 无回环，长时间运行地图会漂移 |
-| 9 | Nav2 参数配置 | ✅ 已调优 | AMCL、DWB、控制器超时均已调优（含 auto-init、抗打滑、终点超时修复）|
-| 10 | **TF 桥接不更新** | ✅ 已绕过 | `odom_to_tf.py` 直接订阅 /odom 广播 TF；含 reverse_yaw 镜像修复 |
+| 9 | 模式 A Nav2 参数 | ✅ 已调优 | AMCL（粒子2000, beams 120, alpha1=1.5）+ DWB 终点修复 |
+| 10 | **TF 桥接不更新** | ✅ 已绕过 | `odom_to_tf.py` 可用；SLAM 模式下 FAST-LIO 接管 TF |
 | 11 | 机器人 frame id 对齐 | ✅ 已验证 | Nav2 使用 `body`，所有配置已对齐 |
-| 12 | **PCD→PGM 质量** | ⚠️ 待验证 | 需要实际运行建图后验证转换效果和地图可用性 |
-| 13 | **Nav2 端到端待验证** | 🔴 待测试 | 参数已全面调优，需在仿真中运行完整导航流程验证 |
-| 14 | 渲染引擎降级 | ✅ 已适配 | 世界文件使用 `ogre` 而非 `ogre2` 避免 ARM64 segfault |
-| 15 | LiDAR 垂直 FOV 非对称 | ⚠️ 已知 | xacro 中 min_angle=-7°, max_angle=+52°，非对称向上倾斜 |
-| 16 | **自转方向一致性** | ✅ 已修复 | REVERSE_YAW=False（物理正确）+ SE(2) 同步 Y 轴镜像 |
+| 12 | **PCD→PGM 质量** | ⚠️ 待验证 | 需要实际运行建图后验证 |
+| 13 | **Nav2 端到端待验证** | 🔴 待测试 | 参数已全面调优，两种模式均需仿真验证 |
+| 14 | 渲染引擎降级 | ✅ 已适配 | 使用 `ogre` 而非 `ogre2` 避免 ARM64 segfault |
+| 15 | LiDAR 垂直 FOV 非对称 | ⚠️ 已知 | xacro 中 min_angle=-7°, max_angle=+52° |
+| 16 | **自转方向一致性** | ✅ 已修复 | REVERSE_YAW=False（物理正确） |
 | 17 | **仿真重启死锁** | ✅ 已修复 | clock_filter + odom_to_tf 均支持 >1s 回跳重新同步 |
-| 18 | **终点超时 abort** | ✅ 已修复 | slowing_factor=2.5, yaw_tolerance=0.30, movement_time_allowance=15s |
+| 18 | **终点超时 abort** | ✅ 已修复 | slowing_factor, yaw_tolerance, movement_time_allowance |
+| 19 | **模式 B 端到端待验证** | 🔴 待测试 | map→odom→camera_init TF 链 + 100×100m costmap 是否能稳定导航 |
+| 20 | **模式 B 全局代价地图无静态层** | ⚠️ 已知 | 仅 obstacle_layer，无先验地图；空旷区域可能导致路径不可靠 |
 
 ---
 
 > **给 Gemini 架构师的核心问题：**
 >
-> Nav2 参数已全面调优（AMCL 噪声模型、DWB 终点行为、控制器超时），当前最大不确定因素是 **端到端仿真验证**。请重点关注：
-> 1. **导航成功率** — 在 10×10m 三柱子房间中，给定 2D Nav Goal 后能否稳定规划并到达？DWB 在大转弯半径滑移下是否仍有 `No valid trajectories`？
-> 2. **PCD→PGM 地图质量** — FAST-LIO 3D 地图投影为 2D 后，柱子/墙壁轮廓是否清晰？是否需要对 `pcd_to_pgm.py` 调整 Z 轴切片参数？
-> 3. **TF 时间戳稳定性** — `clock_filter.py` + `odom_to_tf.py` 在仿真重启后是否正常重新同步？TF 树是否有回跳？
-> 4. **ARM64 性能** — 同时运行 Ignition (ogre) + Nav2 全套，RK3588 各核心负载是否均衡？AMCL `max_particles=2000` + `max_beams=120` 是否仍有余量？
-> 5. **地图初始偏角校准** — `initial_pose=[0,0,0.26]` (+15°) 是否足够精确？是否需要进一步微调？
+> ## 当前最大不确定因素
+>
+> 1. **模式 A（纯导航）端到端验证** — 在 10×10m 三柱子房间中，给定 2D Nav Goal 后能否稳定规划并到达？DWB 在大转弯半径滑移下是否仍有 `No valid trajectories`？
+>
+> 2. **模式 B（SLAM+导航）可行性** — `map → odom → camera_init` 静态 TF 桥接是否能被 Nav2 代价地图正确理解为全局帧？FAST-LIO 实时里程计质量是否足以支撑 DWB 避障规划？
+>
+> 3. **PCD→PGM 地图质量** — FAST-LIO 3D 地图投影为 2D 后，柱子/墙壁轮廓是否清晰？是否需要对 `pcd_to_pgm.py` 调整 Z 轴切片参数？
+>
+> 4. **TF 时间戳稳定性** — `clock_filter.py` 在仿真重启后是否正常重新同步？模式 B 中 FAST-LIO 的 TF 是否持续稳定更新？
+>
+> 5. **ARM64 性能** — 两种模式下 Ignition (ogre) + Nav2 全套，RK3588 各核心负载是否均衡？模式 B 比模式 A 少了 AMCL 开销，但多了 FAST-LIO 实时建图。
+>
+> 6. **模式 B 全局代价地图设计选择** — 使用 100×100m obstacle_layer + rolling window=false 是否是最优策略？FAST-LIO 已有 3D 地图，Nav2 是否应在 odom 系而非 map 系做局部规划？
+>
+> 7. **模式 A 地图初始偏角校准** — `initial_pose=[0,0,0.26]` (+15°) 是否足够精确？是否需要进一步微调？

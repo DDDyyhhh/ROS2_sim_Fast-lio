@@ -31,3 +31,8 @@ __pycache__/
 # ── Misc ───────────────────────────────────────────────────
 *.tmp
 *.bak
+
+# ── Debug artifacts (screenshots, TF tree exports) ────────
+bug*.png
+frames_*.gv
+frames_*.pdf
