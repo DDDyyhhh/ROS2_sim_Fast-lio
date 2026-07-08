@@ -1,0 +1,54 @@
+# hill_coverage_params.yaml — 斜坡场景全覆盖规划参数
+
+# 割草机物理参数
+mower:
+  cutting_width: 0.5        # 割幅 (m)
+  overlap_ratio: 0.1        # 重叠 10%
+  max_speed: 1.0            # 最大速度 (m/s)
+  blade_auto_start: true
+
+# 多区域规划参数
+multi_planner:
+  frame_id: "map"
+  waypoint_spacing: 0.3     # 路径点采样间距 (m)
+  start_from_corner: true   # 从区域角落开始
+  # 内岛膨胀系数（膨胀内岛边界，防止机器人剐蹭）
+  inner_ring_inflate: 0.3
+
+# 地形感知参数
+terrain_aware:
+  enabled: true
+  slope_slow_down_threshold: 20    # 坡度 > 20° 降速
+  slope_slow_down_factor: 0.5      # 降速到 50%
+  # 忽略坡度小于此值的区域（平面当成平地处理）
+  slope_ignore_threshold: 3        # 度
+
+# 区域间导航参数
+inter_area_transit:
+  speed: 0.5                # 导航速度 (m/s)
+  # 避开内岛的区域间路径
+  avoid_obstacles: true
+
+# 路径执行参数
+executor:
+  goal_tolerance: 0.3       # 目标点到达容差 (m)
+  checkpoint_file: "~/hill_coverage_checkpoint.json"
+
+# 安全参数
+safety:
+  enable_boundary_check: true
+  obstacle_stop_range: 0.5
+  emergency_stop_on_error: true
+
+# 可视化参数
+visualization:
+  publish_markers: true
+  marker_lifetime: 5.0
+  # 各区域颜色（循环使用）
+  area_colors:
+    - [0.0, 0.8, 0.0]     # 绿色
+    - [0.0, 0.5, 1.0]     # 蓝色
+    - [1.0, 0.8, 0.0]     # 黄色
+    - [1.0, 0.4, 0.0]     # 橙色
+  inner_ring_color: [1.0, 0.0, 0.0]   # 红色（内岛禁入）
+  covered_color: [0.5, 0.5, 0.5]      # 灰色（已覆盖区域）

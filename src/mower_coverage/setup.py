@@ -2,6 +2,16 @@ from setuptools import setup
 from setuptools import find_packages
 import os
 from glob import glob
+import fnmatch
+
+
+def _find_files(directory, pattern):
+    """递归查找文件"""
+    matches = []
+    for root, dirnames, filenames in os.walk(directory):
+        for filename in fnmatch.filter(filenames, pattern):
+            matches.append(os.path.join(root, filename))
+    return matches
 
 package_name = 'mower_coverage'
 
@@ -17,6 +27,8 @@ setup(
          glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'config'),
          glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'web_frontend'),
+         [f for f in _find_files('web_frontend', '*') if os.path.isfile(f)]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -32,6 +44,11 @@ setup(
             'path_executor = mower_coverage.path_executor:main',
             'coverage_monitor = mower_coverage.coverage_monitor:main',
             'coverage_demo = mower_coverage.coverage_demo:main',
+            # === 斜坡场景 + 多区域新增节点 ===
+            'multi_area_definer = mower_coverage.multi_area_definer:main',
+            'hill_boustrophedon = mower_coverage.hill_boustrophedon:main',
+            'multi_area_executor = mower_coverage.multi_area_executor:main',
+            'web_server = mower_coverage.web_server:main',
         ],
     },
 )

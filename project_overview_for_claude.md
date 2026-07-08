@@ -421,7 +421,7 @@ ros2 launch fast_lio mapping.launch.py config:=mid360.yaml
 
 # 全覆盖规划
 ros2 service call /coverage/plan std_srvs/srv/Trigger
-```
+``` 
 
 ---
 

@@ -1,0 +1,301 @@
+<?xml version="1.0"?>
+<robot name="outdoor_bot">
+
+  <!-- ============================================================ -->
+  <!-- Base Link —— 底盘                                            -->
+  <!-- ============================================================ -->
+  <link name="body">
+    <visual>
+      <geometry><box size="0.4 0.3 0.15"/></geometry>
+      <material name="blue"><color rgba="0 0 0.8 1"/></material>
+    </visual>
+    <collision>
+      <geometry><box size="0.4 0.3 0.15"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="10.0"/>
+      <inertia ixx="0.09" ixy="0.0" ixz="0.0" iyy="0.15" iyz="0.0" izz="0.2"/>
+    </inertial>
+  </link>
+
+  <!-- ============================================================ -->
+  <!-- 4WD 轮子 (四驱) — 手动展开 xacro macro                        -->
+  <!-- ============================================================ -->
+
+  <!-- left_front_wheel -->
+  <link name="left_front_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.04"/></geometry>
+      <material name="black"><color rgba="0 0 0 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.04"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+  <joint name="left_front_wheel_joint" type="continuous">
+    <parent link="body"/>
+    <child link="left_front_wheel"/>
+    <origin xyz="0.15 0.18 -0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- right_front_wheel -->
+  <link name="right_front_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.04"/></geometry>
+      <material name="black"><color rgba="0 0 0 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.04"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+  <joint name="right_front_wheel_joint" type="continuous">
+    <parent link="body"/>
+    <child link="right_front_wheel"/>
+    <origin xyz="0.15 -0.18 -0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- left_rear_wheel -->
+  <link name="left_rear_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.04"/></geometry>
+      <material name="black"><color rgba="0 0 0 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.04"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+  <joint name="left_rear_wheel_joint" type="continuous">
+    <parent link="body"/>
+    <child link="left_rear_wheel"/>
+    <origin xyz="-0.15 0.18 -0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- right_rear_wheel -->
+  <link name="right_rear_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.04"/></geometry>
+      <material name="black"><color rgba="0 0 0 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.08" length="0.04"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+  <joint name="right_rear_wheel_joint" type="continuous">
+    <parent link="body"/>
+    <child link="right_rear_wheel"/>
+    <origin xyz="-0.15 -0.18 -0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- 传感器 Links                                                 -->
+  <!-- ============================================================ -->
+  <link name="lidar_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.05"/></geometry>
+      <material name="black"><color rgba="0 0 0 1"/></material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.05" length="0.05"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.0001"/>
+    </inertial>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="body"/>
+    <child link="lidar_link"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+  </joint>
+
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.00001" ixy="0.0" ixz="0.0" iyy="0.00001" iyz="0.0" izz="0.00001"/>
+    </inertial>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="body"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0.1" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ★ GPS 天线 Link (RTK 天线相位中心) -->
+  <link name="gps_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.04 0.04 0.01"/></geometry>
+      <material name="red"><color rgba="1 0 0 1"/></material>
+    </visual>
+    <inertial>
+      <mass value="0.02"/>
+      <inertia ixx="0.00001" ixy="0.0" ixz="0.0" iyy="0.00001" iyz="0.0" izz="0.00001"/>
+    </inertial>
+  </link>
+
+  <joint name="gps_joint" type="fixed">
+    <parent link="body"/>
+    <child link="gps_link"/>
+    <origin xyz="-0.1 0 0.15" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- Ignition 传感器插件                                            -->
+  <!-- ============================================================ -->
+
+  <!-- Mid-360 模拟 LiDAR -->
+  <gazebo reference="lidar_link">
+    <sensor type="gpu_lidar" name="lidar_sensor">
+      <!-- 前倾 25° (pitch=-0.436rad) 使 Mid-360 FOV 覆盖地面:
+           原 FOV: -7.4°~+52.2° → 倾后: -32.4°~+27.2° (相对水平)
+           确保地形坡度可见   -->
+      <pose>0 0 0.03 0 -0.436 0</pose>
+      <topic>/lidar/points</topic>
+      <ignition_frame_id>lidar_link</ignition_frame_id>
+      <update_rate>20</update_rate>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>1200</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>64</samples>
+            <resolution>1</resolution>
+            <min_angle>-0.129</min_angle>
+            <max_angle>0.911</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>40.0</max>
+          <resolution>0.001</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.02</stddev>
+        </noise>
+      </lidar>
+      <always_on>1</always_on>
+      <visualize>false</visualize>
+    </sensor>
+  </gazebo>
+
+  <!-- IMU — 200Hz -->
+  <gazebo reference="imu_link">
+    <sensor type="imu" name="imu_sensor">
+      <topic>/imu/data</topic>
+      <ignition_frame_id>imu_link</ignition_frame_id>
+      <update_rate>200</update_rate>
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>2e-4</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>1.7e-2</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <!-- ★ RTK GPS — NavSat 传感器 -->
+  <gazebo reference="gps_link">
+    <sensor type="navsat" name="gps_sensor">
+      <topic>/gps/fix</topic>
+      <ignition_frame_id>gps_link</ignition_frame_id>
+      <update_rate>10</update_rate>
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+      <navsat>
+        <latitude>22.5431</latitude>
+        <longitude>114.0579</longitude>
+        <altitude>10.0</altitude>
+        <position_noise_stddev>0.02 0.02 0.05</position_noise_stddev>
+      </navsat>
+    </sensor>
+  </gazebo>
+
+  <!-- ============================================================ -->
+  <!-- 差速驱动 (4WD 滑移转向)                                       -->
+  <!-- ============================================================ -->
+  <gazebo>
+    <plugin
+      filename="libignition-gazebo-diff-drive-system.so"
+      name="ignition::gazebo::systems::DiffDrive">
+      <left_joint>left_front_wheel_joint</left_joint>
+      <left_joint>left_rear_wheel_joint</left_joint>
+      <right_joint>right_front_wheel_joint</right_joint>
+      <right_joint>right_rear_wheel_joint</right_joint>
+
+      <num_wheel_pairs>2</num_wheel_pairs>
+      <wheel_separation>0.58</wheel_separation>
+      <wheel_radius>0.08</wheel_radius>
+      <odom_publish_frequency>20</odom_publish_frequency>
+
+      <topic>/model/outdoor_bot/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+
+      <tf_topic>/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>body</child_frame_id>
+      <update_odom_to_tf>false</update_odom_to_tf>
+    </plugin>
+  </gazebo>
+
+  <!-- 关节状态发布器 -->
+  <gazebo>
+    <plugin
+      filename="libignition-gazebo-joint-state-publisher-system.so"
+      name="ignition::gazebo::systems::JointStatePublisher">
+      <update_rate>30</update_rate>
+      <joint_name>left_front_wheel_joint</joint_name>
+      <joint_name>left_rear_wheel_joint</joint_name>
+      <joint_name>right_front_wheel_joint</joint_name>
+      <joint_name>right_rear_wheel_joint</joint_name>
+    </plugin>
+  </gazebo>
+
+</robot>

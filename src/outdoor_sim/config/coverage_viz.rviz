@@ -100,26 +100,17 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
-    - Class: rviz_default_plugins/Marker
+    - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Area Boundary
       Namespaces:
-        area: true
-      Queue Size: 10
-      Topic:
-        Depth: 5
-        Durability Policy: Transient Local
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /coverage/area_markers
-      Value: true
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
-      Name: Coverage Path
-      Namespaces:
-        planned_path: true
-        path_arrows: true
+        area_boundary: true
+        area_fill: true
+        area_label: true
+        inner_ring_front_lawn: true
+        inner_fill_front_lawn: true
+        inner_ring_back_lawn: true
+        inner_fill_back_lawn: true
       Queue Size: 10
       Topic:
         Depth: 5
@@ -127,15 +118,28 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /coverage/path_markers
+        Value: /multi_area/visualization
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Coverage Path
+      Namespaces:
+        planned_path: true
+      Queue Size: 10
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /coverage/multi_path_markers
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Execution Status
       Namespaces:
-        coverage_target: true
-        coverage_done: true
-        coverage_remaining: true
+        covered_area: true
+        current_goal: true
       Queue Size: 10
       Topic:
         Depth: 5
@@ -201,9 +205,15 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/TopDownOrtho
+      Class: rviz_default_plugins/Orbit
+      Distance: 45
       Enable Stereo Rendering: false
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
       Name: Current View
-      Scale: 65
+      Pitch: 0.6
       Target Frame: map
-      Value: TopDownOrtho (rviz_default_plugins)
+      Value: Orbit (rviz_default_plugins)
+      Yaw: -2.5

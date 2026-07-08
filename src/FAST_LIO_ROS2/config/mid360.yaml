@@ -1,49 +1,73 @@
-# FAST-LIO 配置 — Mid-360 仿真 (Ignition Fortress 32线 gpu_lidar)
-# 适用于 outdoor_sim 仿真环境
+# FAST-LIO 配置 — Mid-360 仿真 (Ignition Fortress 64线 gpu_lidar)
+# 适用于 outdoor_sim 仿真环境 (ROS2 参数格式)
+/**:
+  ros__parameters:
+    # ===== 常规参数 =====
+    common.lid_topic: "/velodyne_points"
+    common.imu_topic: "/imu/data"
+    common.time_sync_en: false         # 仿真时钟完美对齐，无需时间同步
+    common.time_offset_lidar_to_imu: 0.0
+    common.extrinsic_est_en: false     # 仿真中外参已知，关闭在线估计
 
-common:
-    lid_topic: "/velodyne_points"
-    imu_topic:  "/imu/data"
-    time_sync_en: false         # 仿真时钟完美对齐，无需时间同步
-    extrinsic_est_en: false     # 仿真中外参已知，关闭在线估计
-    path_en: true               # 保存轨迹
+    # ===== 发布选项 =====
+    publish.path_en: true
+    publish.effect_map_en: false
+    publish.map_en: true
+    publish.scan_publish_en: true
+    publish.dense_publish_en: true
+    publish.scan_bodyframe_pub_en: true
 
-preprocess:
-    lidar_type: 2               # 2 = Velodyne/PointCloud2 输入
-    scan_line: 32               # 32线雷达
-    blind: 4                    # 盲区 4m（比默认稍大，过滤掉机器人自身点）
-    point_filter_num: 3         # 每3个点采1个（降采样，节省RK3588算力）
+    # ===== 预处理 =====
+    preprocess.lidar_type: 2           # 2 = Velodyne/PointCloud2 输入
+    preprocess.scan_line: 64           # 64线雷达（仿真升级）
+    preprocess.blind: 4.0              # 盲区 4m
+    preprocess.point_filter_num: 3     # 每3个点采1个（降采样）
+    preprocess.timestamp_unit: 1       # US (微秒)
+    preprocess.scan_rate: 10
 
-mapping:
-    filter_size_surf: 0.15      # 面特征滤波尺寸
-    filter_size_map: 0.15       # 地图体素滤波尺寸
-    cube_side_length: 1000      # 地图立方体边长 (足够覆盖50m×50m草坪)
-    runtime_dump_en: false
-    maximum_inc_meas: 2000      # 每次最大增量点数
-    publish_effect_world: false
-    publish_effect_world_resolution: 0.05
+    # ===== 外参 LiDAR→IMU =====
+    mapping.extrinsic_T: [0.0, 0.0, 0.03]   # LiDAR 在 IMU 上方 3cm
+    mapping.extrinsic_R: [1.0, 0.0, 0.0,
+                          0.0, 1.0, 0.0,
+                          0.0, 0.0, 1.0]
 
-    # 外参 LiDAR→IMU
-    extrinsic_T: [0, 0, 0.03]   # LiDAR 在 IMU 上方 3cm (仿真urdf 中设定)
-    extrinsic_R: [1, 0, 0,
-                  0, 1, 0,
-                  0, 0, 1]      # 单位阵 (仿真中已对齐)
+    # ===== 建图滤波 =====
+    filter_size_corner: 0.5
+    filter_size_surf: 0.15
+    filter_size_map: 0.15
+    cube_side_length: 1000.0
 
-    # IMU 噪声参数 (仿真 IMU 噪声模型)
-    imu_gyro_noise: 0.0001      # 角速度噪声密度 (rad/s/√Hz)
-    imu_acc_noise: 0.01         # 加速度噪声密度 (m/s²/√Hz)
-    imu_gyro_bias_noise: 0.000001
-    imu_acc_bias_noise: 0.0001
-
-    # 滤波参数
-    maximum_iteration: 3        # IK.D 迭代次数（仿真中收敛快）
+    # ===== 建图参数 =====
+    mapping.det_range: 300.0
+    mapping.fov_degree: 180.0
+    mapping.gyr_cov: 0.1
+    mapping.acc_cov: 0.1
+    mapping.b_gyr_cov: 0.0001
+    mapping.b_acc_cov: 0.0001
+    mapping.imu_gyro_noise: 0.0001
+    mapping.imu_acc_noise: 0.01
+    mapping.imu_gyro_bias_noise: 0.000001
+    mapping.imu_acc_bias_noise: 0.0001
+    maximum_iteration: 3
     minimum_uncertainty: 0.001
-    imu_time_shift: 0.0         # 仿真中无时间偏移
+    imu_time_shift: 0.0
     cut_frame_num: 10000
     com_cov: 0.1
 
-    # 图优化
+    # ===== 其他 =====
+    point_filter_num: 3
+    feature_extract_enable: false
+    runtime_pos_log_enable: false
+    map_file_path: ""
+    maximum_inc_meas: 2000
+    publish_effect_world: false
+    publish_effect_world_resolution: 0.05
+    runtime_dump_en: false
     if_dump_seq: false
     if_record_offline_map: false
     online_map_resolution: 0
     filter_offboard: false
+
+    # ===== PCD 保存 =====
+    pcd_save.pcd_save_en: false
+    pcd_save.interval: -1

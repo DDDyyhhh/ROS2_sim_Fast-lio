@@ -1,0 +1,57 @@
+# hill_sensor_params.yaml — 斜坡场景传感器融合参数
+#
+# ★ robot_localization 参数必须放在 YAML 顶层，可直接被 ekf_node 和 navsat_transform_node 读取
+# ★ 只包含标准参数（非标准参数可能导致 SIGABRT）
+#
+# 融合架构:
+#   FAST-LIO (/Odometry) ─────┐
+#   IMU (/imu/data) ──────────┤
+#   GPS (/gps/fix) ─→ navsat_transform ─→ /odom/gps ─┤
+#                             ↓
+#                      EKF (ekf_node) → /odometry/filtered
+#
+# ===================== ekf_node 参数 =====================
+
+frequency: 30.0                # EKF 更新频率
+sensor_timeout: 0.1
+two_d_mode: false              # ❗斜坡 → 3D 模式
+publish_acceleration: false
+world_frame: odom
+
+# FAST-LIO 里程计（差分模式，相对 SLAM）
+odom0: /Odometry
+odom0_config: [true, true, true, true, true, true,
+               false, false, false, false, false, false,
+               false, false, false, false, false, false]
+odom0_differential: true
+odom0_relative: false
+odom0_queue_size: 10
+
+# IMU — 只融合姿态角 + 角速度
+imu0: /imu/data
+imu0_config: [false, false, false, true, true, true,
+              false, false, false, true, true, true,
+              false, false, false, false, false, false]
+imu0_differential: false
+imu0_relative: true
+imu0_queue_size: 10
+imu0_remove_gravitational_acceleration: true
+
+# GPS 里程计（navsat_transform 输出）
+odom1: /odom/gps
+odom1_config: [true, true, false, false, false, true,
+               false, false, false, false, false, false,
+               false, false, false, false, false, false]
+odom1_differential: false
+odom1_relative: false
+odom1_queue_size: 10
+
+# ===================== navsat_transform_node 参数 =====================
+
+delay: 3.0
+magnetic_declination_radians: 0.0
+yaw_offset: 0.0
+zero_altitude: true
+publish_filtered_gps: true
+use_odometry_yaw: false
+wait_for_datum: true

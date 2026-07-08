@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>自动割草机 - 区域规划</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0/dist/leaflet.draw.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, 'Microsoft YaHei', sans-serif; height: 100vh; display: flex; flex-direction: column; background: #1a1a2e; color: #eee; }
+        #header { background: #16213e; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+        #header h1 { font-size: 18px; color: #0f9; }
+        #status-bar { display: flex; gap: 12px; font-size: 13px; align-items: center; flex-wrap: wrap; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+        .connected { background: #0f9; box-shadow: 0 0 6px #0f9; }
+        .disconnected { background: #f44; box-shadow: 0 0 6px #f44; }
+        #map { flex: 1; }
+        #footer { background: #16213e; padding: 8px 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 13px; }
+        .btn { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .btn-primary { background: #0f9; color: #111; }
+        .btn-danger { background: #f44; color: #fff; }
+        .btn-warning { background: #f80; color: #fff; }
+        .btn-secondary { background: #3a4a6e; color: #ddd; }
+        .btn-active { background: #0f9; color: #111; }
+        .btn-obstacle-active { background: #f44; color: #fff; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        #area-list { display: flex; gap: 6px; flex-wrap: wrap; }
+        .area-tag { background: #2a3a5e; padding: 2px 10px; border-radius: 12px; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+        .area-tag .remove { cursor: pointer; color: #f88; font-weight: bold; }
+        .coverage-bar { background: #2a3a5e; height: 6px; border-radius: 3px; width: 80px; overflow: hidden; }
+        .coverage-fill { background: #0f9; height: 100%; transition: width 0.5s; }
+        #toast-container { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+        @keyframes pulse-robot { 0%,100% { box-shadow: 0 0 12px rgba(255,34,34,0.9), 0 0 24px rgba(255,34,34,0.4); } 50% { box-shadow: 0 0 20px rgba(255,34,34,1), 0 0 40px rgba(255,34,34,0.6); } }
+        .toast { padding: 8px 20px; border-radius: 6px; font-size: 14px; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: opacity 0.3s; white-space: nowrap; }
+        .toast-info { background: #3a4a6e; color: #fff; }
+        .toast-success { background: #0f9; color: #111; }
+        .toast-error { background: #f44; color: #fff; }
+        @media (max-width: 600px) {
+            #header h1 { font-size: 14px; }
+            .btn { padding: 8px 12px; font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>🚜 自动割草机</h1>
+        <div id="status-bar">
+            <span id="ros-status"><span class="status-dot disconnected"></span>未连接</span>
+            <span id="gps-status">🛰️ --</span>
+            <span id="coverage-display">📊 --%</span>
+            <span id="mode-display">⚙️ --</span>
+            <span id="debug-coords" style="font-size:11px;color:#888;font-family:monospace;"></span>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <div id="map"></div>
+
+    <div id="footer">
+        <!-- 绘图模式切换 -->
+        <div style="display:flex;gap:4px;background:#2a3a5e;border-radius:4px;padding:2px;">
+            <button id="btn-mode-area" class="btn btn-sm btn-active">📍区域</button>
+            <button id="btn-mode-obstacle" class="btn btn-sm">⛔障碍</button>
+        </div>
+        <span style="color:#555;">|</span>
+        <!-- 操作按钮 -->
+        <button id="btn-send" class="btn btn-primary" disabled>📤 发送</button>
+        <button id="btn-plan" class="btn btn-secondary" disabled>📋 规划</button>
+        <button id="btn-execute" class="btn btn-secondary" disabled>▶️ 执行</button>
+        <button id="btn-pause" class="btn btn-warning" disabled>⏸️ 暂停</button>
+        <button id="btn-resume" class="btn btn-secondary" disabled>▶️ 继续</button>
+        <button id="btn-stop" class="btn btn-danger" disabled>⏹️ 停止</button>
+        <button id="btn-clear" class="btn btn-danger">🗑️ 清除</button>
+        <span style="color:#555;">|</span>
+        <div id="area-list" style="flex:1;"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0/dist/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

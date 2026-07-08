@@ -31,6 +31,9 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
+# Web 前端页面（由 mower_coverage 包安装）
+# install(DIRECTORY ../web_frontend DESTINATION share/${PROJECT_NAME})
+
 # 安装 Python 节点脚本
 install(PROGRAMS
   scripts/odom_to_tf.py

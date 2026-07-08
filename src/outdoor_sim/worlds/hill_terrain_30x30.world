@@ -1,0 +1,290 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="hill_terrain_30x30">
+
+    <!-- 物理引擎 -->
+    <physics name="fast_physics" type="ignored">
+      <max_step_size>0.005</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Ignition 核心系统 -->
+    <plugin filename="libignition-gazebo-physics-system.so" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="libignition-gazebo-user-commands-system.so" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="libignition-gazebo-scene-broadcaster-system.so" name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="libignition-gazebo-imu-system.so" name="ignition::gazebo::systems::Imu"/>
+    <plugin filename="libignition-gazebo-navsat-system.so" name="ignition::gazebo::systems::NavSat"/>
+    <plugin filename="libignition-gazebo-sensors-system.so" name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre</render_engine>
+    </plugin>
+
+    <!-- 太阳光 -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 50 0 0 0</pose>
+      <diffuse>0.9 0.9 0.85 1</diffuse>
+      <specular>0.3 0.3 0.3 1</specular>
+      <attenuation><range>500</range><constant>0.9</constant><linear>0.01</linear><quadratic>0.001</quadratic></attenuation>
+      <direction>-0.3 0.1 -0.95</direction>
+    </light>
+
+    <!-- 环境光 -->
+    <scene>
+      <ambient>0.4 0.4 0.5 1</ambient>
+      <background>0.8 0.85 0.8 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <!-- ★ GPS 坐标参考（NavSat 传感器需要） -->
+    <spherical_coordinates>
+      <latitude_deg>22.5431</latitude_deg>
+      <longitude_deg>114.0579</longitude_deg>
+      <elevation>0</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+
+    <!-- ============================================================ -->
+    <!-- 高度图地形 (30m × 30m, 高度 0–4m)                            -->
+    <!-- heightmap_30x30.png: 513×513 灰度 PNG (2^9+1 = Ogre 要求)   -->
+    <!-- ============================================================ -->
+    <model name="hill_terrain">
+      <static>true</static>
+      <link name="link">
+        <!-- 碰撞地形（使用简化网格） -->
+        <collision name="collision">
+          <geometry>
+            <heightmap>
+              <uri>heightmap_30x30.png</uri>
+              <size>30 30 4</size>
+              <pos>-15 -15 0</pos>
+              <sampling>1</sampling>
+            </heightmap>
+          </geometry>
+          <surface>
+            <friction>
+              <ode><mu>1.5</mu><mu2>1.5</mu2></ode>
+            </friction>
+          </surface>
+        </collision>
+        <!-- 视觉地形 -->
+        <visual name="visual">
+          <geometry>
+            <heightmap>
+              <uri>heightmap_30x30.png</uri>
+              <size>30 30 4</size>
+              <pos>-15 -15 0</pos>
+              <sampling>1</sampling>
+            </heightmap>
+          </geometry>
+          <material>
+            <ambient>0.3 0.5 0.15 1</ambient>
+            <diffuse>0.35 0.55 0.2 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================ -->
+    <!-- 池塘 (东南洼地)                                               -->
+    <!-- ============================================================ -->
+    <model name="pond">
+      <static>true</static>
+      <pose>8 -8 0.1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>2.0</radius><length>0.2</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>2.0</radius><length>0.2</length></cylinder></geometry>
+          <material>
+            <ambient>0.1 0.3 0.6 0.6</ambient>
+            <diffuse>0.15 0.4 0.7 0.6</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================ -->
+    <!-- 陡坡禁入区标记 (西北丘顶, 纯视觉)                             -->
+    <!-- ============================================================ -->
+    <model name="steep_zone_marker">
+      <static>true</static>
+      <pose>-10 10 2.6 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>3.0 3.0 0.05</size></box></geometry>
+          <material>
+            <ambient>0.8 0.1 0.1 0.5</ambient>
+            <diffuse>0.9 0.15 0.15 0.5</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================ -->
+    <!-- 灌木丛 ×3 (脊线两侧)                                          -->
+    <!-- ============================================================ -->
+    <model name="bush_1">
+      <static>true</static>
+      <pose>-2 5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.4</radius><length>0.5</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><sphere><radius>0.5</radius></sphere></geometry>
+          <material>
+            <ambient>0.15 0.5 0.1 1</ambient>
+            <diffuse>0.2 0.55 0.12 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="bush_2">
+      <static>true</static>
+      <pose>5 -3 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.5</radius><length>0.6</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><sphere><radius>0.6</radius></sphere></geometry>
+          <material>
+            <ambient>0.15 0.48 0.08 1</ambient>
+            <diffuse>0.2 0.52 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="bush_3">
+      <static>true</static>
+      <pose>-8 0 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.35</radius><length>0.4</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><sphere><radius>0.45</radius></sphere></geometry>
+          <material>
+            <ambient>0.12 0.45 0.08 1</ambient>
+            <diffuse>0.18 0.5 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================ -->
+    <!-- 树 ×4 (同现有地图样式)                                        -->
+    <!-- ============================================================ -->
+    <model name="hill_tree_1">
+      <static>true</static>
+      <pose>10 2 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.2</radius><length>1.5</length></cylinder></geometry>
+        </collision>
+        <visual name="trunk_vis">
+          <geometry><cylinder><radius>0.2</radius><length>1.5</length></cylinder></geometry>
+          <material><ambient>0.4 0.2 0.1 1</ambient><diffuse>0.5 0.25 0.1 1</diffuse></material>
+        </visual>
+        <visual name="canopy_vis">
+          <pose>0 0 1.5 0 0 0</pose>
+          <geometry><sphere><radius>1.5</radius></sphere></geometry>
+          <material><ambient>0.2 0.5 0.1 1</ambient><diffuse>0.25 0.55 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="hill_tree_2">
+      <static>true</static>
+      <pose>-5 -12 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.25</radius><length>1.5</length></cylinder></geometry>
+        </collision>
+        <visual name="trunk_vis">
+          <geometry><cylinder><radius>0.25</radius><length>1.5</length></cylinder></geometry>
+          <material><ambient>0.4 0.2 0.1 1</ambient><diffuse>0.5 0.25 0.1 1</diffuse></material>
+        </visual>
+        <visual name="canopy_vis">
+          <pose>0 0 1.5 0 0 0</pose>
+          <geometry><sphere><radius>2.0</radius></sphere></geometry>
+          <material><ambient>0.15 0.45 0.1 1</ambient><diffuse>0.2 0.5 0.12 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="hill_tree_3">
+      <static>true</static>
+      <pose>12 10 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.15</radius><length>1.2</length></cylinder></geometry>
+        </collision>
+        <visual name="trunk_vis">
+          <geometry><cylinder><radius>0.15</radius><length>1.2</length></cylinder></geometry>
+          <material><ambient>0.4 0.2 0.1 1</ambient><diffuse>0.5 0.25 0.1 1</diffuse></material>
+        </visual>
+        <visual name="canopy_vis">
+          <pose>0 0 1.2 0 0 0</pose>
+          <geometry><sphere><radius>1.2</radius></sphere></geometry>
+          <material><ambient>0.2 0.5 0.1 1</ambient><diffuse>0.25 0.55 0.15 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="hill_tree_4">
+      <static>true</static>
+      <pose>-12 -5 0 0 0 0</pose>
+      <link name="trunk">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.2</radius><length>1.5</length></cylinder></geometry>
+        </collision>
+        <visual name="trunk_vis">
+          <geometry><cylinder><radius>0.2</radius><length>1.5</length></cylinder></geometry>
+          <material><ambient>0.4 0.2 0.1 1</ambient><diffuse>0.5 0.25 0.1 1</diffuse></material>
+        </visual>
+        <visual name="canopy_vis">
+          <pose>0 0 1.5 0 0 0</pose>
+          <geometry><sphere><radius>1.5</radius></sphere></geometry>
+          <material><ambient>0.15 0.45 0.1 1</ambient><diffuse>0.2 0.5 0.12 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============================================================ -->
+    <!-- 石头 ×2                                                       -->
+    <!-- ============================================================ -->
+    <model name="hill_rock_1">
+      <static>true</static>
+      <pose>10 -5 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><sphere><radius>0.2</radius></sphere></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><sphere><radius>0.2</radius></sphere></geometry>
+          <material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="hill_rock_2">
+      <static>true</static>
+      <pose>-10 -10 0 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><sphere><radius>0.15</radius></sphere></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><sphere><radius>0.15</radius></sphere></geometry>
+          <material><ambient>0.4 0.4 0.4 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

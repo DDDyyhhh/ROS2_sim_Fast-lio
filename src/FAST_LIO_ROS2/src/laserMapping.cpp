@@ -598,7 +598,8 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
         RGBpointBodyToWorld(&laserCloudFullRes->points[i], \
                             &laserCloudWorld->points[i]);
     }
-    *pcl_wait_pub += *laserCloudWorld;
+    // Replace, don't accumulate — prevents OOM from unbounded growth
+    *pcl_wait_pub = *laserCloudWorld;
 
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg);
@@ -1082,7 +1083,11 @@ private:
             if (scan_pub_en)      publish_frame_world(pubLaserCloudFull_);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body_);
             if (effect_pub_en) publish_effect_world(pubLaserCloudEffect_);
-            // if (map_pub_en) publish_map(pubLaserCloudMap_);
+            if (map_pub_en && Measures.lidar_beg_time - last_map_pub_time_ > 1.0)
+            {
+                publish_map(pubLaserCloudMap_);
+                last_map_pub_time_ = Measures.lidar_beg_time;
+            }
 
             /*** Debug variables ***/
             if (runtime_pos_log)
@@ -1155,6 +1160,7 @@ private:
 
     bool effect_pub_en = false, map_pub_en = false;
     int effect_feat_num = 0, frame_num = 0;
+    double last_map_pub_time_ = 0.0;
     double deltaT, deltaR, aver_time_consu = 0, aver_time_icp = 0, aver_time_match = 0, aver_time_incre = 0, aver_time_solve = 0, aver_time_const_H_time = 0;
     bool flg_EKF_converged, EKF_stop_flg = 0;
     double epsi[23] = {0.001};
