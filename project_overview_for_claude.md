@@ -1,5 +1,6 @@
 # 🚜 自动割草机 — RK3588 实车开发指南
 
+> 当前主交接文档。其他 overview 文档若与本文或 `CLAUDE.md` 冲突，以本文和 `CLAUDE.md` 为准。  
 > 面向 Claude 的项目总览文档  
 > 用途：在 RK3588 (Orange Pi 5 Plus) 上部署并继续开发
 
