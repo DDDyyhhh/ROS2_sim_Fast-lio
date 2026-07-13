@@ -314,6 +314,16 @@ class HillBoustrophedon(Node):
                     blocking.append(obs)
             return blocking
 
+        def candidate_route_is_safe(candidates):
+            """候选绕障点及其新增线段都必须避开全部障碍物。"""
+            route = [fixed[-1], *candidates]
+            if any(point_inside_obstacle(pt) for pt in route):
+                return False
+            return all(
+                not segment_hits_obstacle(route[i], route[i + 1])
+                for i in range(len(route) - 1)
+            )
+
         def append_point(points, pt):
             if points and points[-1][:2] == pt[:2]:
                 return
@@ -371,18 +381,14 @@ class HillBoustrophedon(Node):
                     curr,
                 ]
 
-                # 尝试添加候选点
-                added_count = 0
-                for pt in candidates:
-                    if not point_inside_obstacle(pt):
+                # 候选点和新增线段必须一起验证；只验证点会让绕过当前
+                # 障碍物的竖直/水平段穿过另一个分离障碍物。
+                if candidate_route_is_safe(candidates):
+                    for pt in candidates:
                         append_point(fixed, pt)
-                        added_count += 1
-
-                if added_count > 0:
-                    # 至少添加了一个点，绕障成功
                     break
 
-                # 所有候选点都在障碍物内，增大安全距离再试
+                # 候选点或候选线段不安全，增大安全距离再试
                 vertical_clearance += 0.5
                 horizontal_margin += 0.3
             else:
@@ -536,6 +542,12 @@ class HillBoustrophedon(Node):
                     transit = self.plan_transit(wp[-1], next_poly)
                     all_waypoints.extend(transit)
                     self.get_logger().info(f'  区域 [{name}] → [{next_name}]: 导航路径')
+
+        # 区域内路径已分别绕障，但区域间 transit 可能穿过任一区域的障碍物；
+        # 完整路径拼接后统一复查，确保发布给执行器和前端的全局路径都安全。
+        if all_obstacles and all_waypoints:
+            all_waypoints = self._fix_obstacle_crossings(
+                all_waypoints, all_obstacles, self.transit_speed)
 
         self.last_waypoints = all_waypoints
         self.last_obstacles = all_obstacles

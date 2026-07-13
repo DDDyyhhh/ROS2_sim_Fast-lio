@@ -140,6 +140,100 @@ def test_multiple_areas_create_transit_without_crashing():
     assert len(path) > 2
 
 
+def test_multi_area_transit_avoids_next_area_obstacle():
+    """区域间 transit 不能穿过下一个区域膨胀后的障碍物。"""
+    planner = object.__new__(HillBoustrophedon)
+    planner.inner_inflate = 0.3
+    planner.swath_spacing = 0.45
+    planner.spacing = 0.3
+    planner.transit_speed = 0.5
+    planner.last_waypoints = []
+    planner.last_obstacles = []
+    planner.publish_path = lambda waypoints: None
+    planner.get_logger = lambda: type('Logger', (), {
+        'info': lambda self, *args, **kwargs: None,
+        'warn': lambda self, *args, **kwargs: None,
+    })()
+
+    # 第一个区域的终点在 (-2, 1.6)，第二个区域的最近边界点为
+    # (2, 1.6)。障碍物贴近第二个区域左边界，膨胀后会延伸到 x=1.8，
+    # 因此当前的区域间直线会直接穿过它。
+    obstacle = [(2.1, 1.0), (3.0, 1.0), (3.0, 2.0), (2.1, 2.0)]
+    areas = {
+        '区域 1': {
+            'points': [(-6, -2), (-2, -2), (-2, 2), (-6, 2)],
+            'inner_rings': [],
+            'cutting_angle': 0.0,
+            'max_speed': 1.0,
+        },
+        '区域 2': {
+            'points': [(2, -2), (6, -2), (6, 2), (2, 2)],
+            'inner_rings': [obstacle],
+            'cutting_angle': 0.0,
+            'max_speed': 1.0,
+        },
+    }
+
+    path = planner.plan_from_areas(areas)
+    inflated_obstacle = Polygon(obstacle).buffer(0.3)
+
+    assert not path_has_points_inside(path, inflated_obstacle), path
+    assert not path_crosses_obstacle(path, inflated_obstacle), path
+
+    # 规划器发布给 Web/RViz 的是降采样路径，降采样后也必须保持安全。
+    sampled = planner._downsample(path, step=10)
+    assert not path_has_points_inside(sampled, inflated_obstacle), sampled
+    assert not path_crosses_obstacle(sampled, inflated_obstacle), sampled
+
+
+def test_global_detour_avoids_all_separated_obstacles():
+    """全局绕障新增的线段也不能穿过另一个分离障碍物。"""
+    planner = object.__new__(HillBoustrophedon)
+    planner.inner_inflate = 0.3
+    planner.swath_spacing = 0.45
+    planner.spacing = 0.3
+    planner.transit_speed = 0.5
+    planner.last_waypoints = []
+    planner.last_obstacles = []
+    planner.publish_path = lambda waypoints: None
+    planner.get_logger = lambda: type('Logger', (), {
+        'info': lambda self, *args, **kwargs: None,
+        'warn': lambda self, *args, **kwargs: None,
+    })()
+
+    # 第一个障碍物触发全局 transit 绕障；第二个障碍物位于候选绕障
+    # 竖直段中。只检查候选点会误以为安全，但新增线段会穿过第二个障碍物。
+    inner_rings = [
+        [(2.05, 1.0), (3.0, 1.0), (3.0, 1.8), (2.05, 1.8)],
+        [(3.5, -0.4), (4.5, -0.4), (4.5, 0.6), (3.5, 0.6)],
+    ]
+    areas = {
+        '区域 1': {
+            'points': [(-8, -2), (-2, -2), (-2, 2), (-8, 2)],
+            'inner_rings': [],
+            'cutting_angle': 0.0,
+            'max_speed': 1.0,
+        },
+        '区域 2': {
+            'points': [(2, -2), (12, -2), (12, 2), (2, 2)],
+            'inner_rings': inner_rings,
+            'cutting_angle': 0.0,
+            'max_speed': 1.0,
+        },
+    }
+
+    path = planner.plan_from_areas(areas)
+    inflated_obstacles = [Polygon(ring).buffer(0.3) for ring in inner_rings]
+    combined = unary_union(inflated_obstacles)
+
+    assert not path_has_points_inside(path, combined), path
+    assert not path_crosses_obstacle(path, combined), path
+
+    sampled = planner._downsample(path, step=10)
+    assert not path_has_points_inside(sampled, combined), sampled
+    assert not path_crosses_obstacle(sampled, combined), sampled
+
+
 def test_one_area_two_obstacles_no_path_inside():
     """一个区域内有两个障碍物时，路径不能因为用全局合并框绕障而进入另一个障碍物。"""
     planner = object.__new__(HillBoustrophedon)
@@ -176,5 +270,7 @@ if __name__ == "__main__":
     test_downsample_preserves_obstacle_detour_points()
     test_current_field_geometry_keeps_path_outside_inflated_obstacle()
     test_multiple_areas_create_transit_without_crashing()
+    test_multi_area_transit_avoids_next_area_obstacle()
+    test_global_detour_avoids_all_separated_obstacles()
     test_one_area_two_obstacles_no_path_inside()
     print("✅ hill_boustrophedon 障碍物回归测试通过")
