@@ -22,6 +22,7 @@ import math
 import os
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import Twist, Point
 from visualization_msgs.msg import Marker, MarkerArray
@@ -103,7 +104,7 @@ class MultiAreaExecutor(Node):
         # LiDAR 扫描订阅（避障用）
         if self.execution_mode == 'safe':
             self.scan_sub = self.create_subscription(
-                LaserScan, '/scan', self.scan_callback, 10)
+                LaserScan, '/scan', self.scan_callback, qos_profile_sensor_data)
             self.get_logger().info(
                 f'🔒 避障模式: 前方 {self.obstacle_stop_range}m 内障碍物自动停车')
 

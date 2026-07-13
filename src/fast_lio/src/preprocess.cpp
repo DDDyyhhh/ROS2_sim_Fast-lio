@@ -1,9 +1,19 @@
 #include "preprocess.h"
 
+#include <algorithm>
 #include <pcl/common/common.h>
 
 #define RETURN0 0x00
 #define RETURN0AND1 0x10
+
+namespace
+{
+bool has_point_field(const sensor_msgs::msg::PointCloud2 &msg, const char *name)
+{
+  return std::any_of(msg.fields.begin(), msg.fields.end(),
+                     [name](const auto &field) { return field.name == name; });
+}
+}  // namespace
 
 Preprocess::Preprocess() : feature_enabled(0), lidar_type(AVIA), blind(0.01), point_filter_num(1)
 {
@@ -305,7 +315,34 @@ void Preprocess::velodyne_handler(const sensor_msgs::msg::PointCloud2::UniquePtr
   pl_full.clear();
 
   pcl::PointCloud<velodyne_ros::Point> pl_orig;
-  pcl::fromROSMsg(*msg, pl_orig);
+  if (has_point_field(*msg, "time"))
+  {
+    pcl::fromROSMsg(*msg, pl_orig);
+  }
+  else
+  {
+    // The simulated PointCloud2 has x/y/z/intensity/ring but no per-point
+    // time. Keep ring information and let the existing yaw-based fallback
+    // below synthesize the offset time without asking PCL for a missing field.
+    pcl::PointCloud<velodyne_ros::PointXYZIR> points_without_time;
+    pcl::fromROSMsg(*msg, points_without_time);
+
+    pl_orig.points.resize(points_without_time.points.size());
+    pl_orig.width = points_without_time.width;
+    pl_orig.height = points_without_time.height;
+    pl_orig.is_dense = points_without_time.is_dense;
+    for (size_t i = 0; i < points_without_time.points.size(); ++i)
+    {
+      const auto &source = points_without_time.points[i];
+      auto &target = pl_orig.points[i];
+      target.x = source.x;
+      target.y = source.y;
+      target.z = source.z;
+      target.intensity = source.intensity;
+      target.time = 0.0f;
+      target.ring = source.ring;
+    }
+  }
   int plsize = pl_orig.points.size();
   if (plsize == 0)
     return;

@@ -32,6 +32,7 @@ def generate_launch_description():
         "two_d_mode": False,              # ❗斜坡 → 3D 模式
         "publish_acceleration": False,
         "world_frame": "odom",
+        "base_link_frame": "body",
 
         # FAST-LIO 里程计（差分模式，相对 SLAM）
         "odom0": "/Odometry",
@@ -66,6 +67,7 @@ def generate_launch_description():
     navsat_params = {
         "frequency": 30.0,
         "delay": 3.0,
+        "transform_timeout": 0.2,
         "magnetic_declination_radians": 0.0,
         "yaw_offset": 0.0,
         "zero_altitude": True,
@@ -116,6 +118,7 @@ def generate_launch_description():
                 ("/imu", "/imu/data"),
                 ("/gps/fix", "/gps/fix"),
                 ("/odometry/filtered", "/odometry/filtered"),
+                ("/odometry/gps", "/odom/gps"),
             ],
         ),
 

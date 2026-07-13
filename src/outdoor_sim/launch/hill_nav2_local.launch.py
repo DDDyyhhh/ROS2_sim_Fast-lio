@@ -43,7 +43,7 @@ def generate_launch_description():
                 "inf_epsilon": 1.0,
             }],
             remappings=[
-                ("/velodyne_points", "/velodyne_points"),
+                ("cloud_in", "/velodyne_points"),
                 ("/scan", "/scan"),
             ],
         ),

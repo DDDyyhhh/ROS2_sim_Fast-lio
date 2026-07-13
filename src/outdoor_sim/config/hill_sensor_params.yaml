@@ -17,6 +17,7 @@ sensor_timeout: 0.1
 two_d_mode: false              # ❗斜坡 → 3D 模式
 publish_acceleration: false
 world_frame: odom
+base_link_frame: body
 
 # FAST-LIO 里程计（差分模式，相对 SLAM）
 odom0: /Odometry
@@ -49,6 +50,7 @@ odom1_queue_size: 10
 # ===================== navsat_transform_node 参数 =====================
 
 delay: 3.0
+transform_timeout: 0.2
 magnetic_declination_radians: 0.0
 yaw_offset: 0.0
 zero_altitude: true
