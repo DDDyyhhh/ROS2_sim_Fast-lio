@@ -55,4 +55,4 @@
 - 工具清理：确认项目内 `.agents/skills` 与全局 skills 完全一致后，已删除 `.agents/`、`.superpowers/`、`docs/superpowers/plans/` 和 `skills-lock.json`。
 - 已知问题：清洁运行仍有少量 EKF “Failed to meet update rate” 性能提示；长时间高负载运行曾出现 FAST-LIO `No Effective Points`，非法 Web points 格式仍可能导致定义节点退出。
 - 本次实现：修正 `cloud_in → /velodyne_points`；safe 执行器使用 sensor-data BEST_EFFORT QoS；EKF 使用 `body`，navsat 输出 remap 到 `/odom/gps` 并等待 TF 0.2 秒；FAST-LIO 对无 `time` 但有 `ring` 的 PointCloud2 使用无时间字段解析并复用 yaw 合成 offset time。
-- 下一步行动：本专项无需继续修改；如继续开发，先决定是否单独开启传感器性能专项，再规划 Web payload 原子校验与安全状态机。本次改动待提交并推送到当前远程分支。
+- 下一步行动：本专项无需继续修改；如继续开发，先决定是否单独开启传感器性能专项，再规划 Web payload 原子校验与安全状态机。本次改动已提交为 `b69dbea` 并推送到当前远程分支。
