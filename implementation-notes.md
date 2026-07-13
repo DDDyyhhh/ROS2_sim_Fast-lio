@@ -31,3 +31,13 @@
 - Edge cases found: 4（只读 `.git` 挂载、ROS Python 脚本安装位置、非法 Web points 格式、现有传感器链警告）。
 - Verification status: 结构、构建、兼容入口和 Web 最小闭环通过。
 - Next session should read first: `docs/architecture/workspace.md` 与本文件的 Questions for review。
+
+## Active Handoff（当前交接进度）
+
+- 当前进度：工作区根迁移、三个 ROS 包整理、`mower_coverage` 工作流分层、旧入口兼容、新启动 profiles、运行时状态路径和分层文档均已完成。
+- 当前提交：`06dfec8 Reorganize mower workspace and ROS profiles`；当前分支为 `fix/web-launch-obstacle-planning`。
+- 验证状态：全量构建、现有回归测试、旧入口与 launch 解析、`web_minimal` Web 多区域规划执行闭环均已通过；`sensor_full` 的所有目标进程可以启动。
+- 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
+- 工具清理：确认项目内 `.agents/skills` 与全局 skills 完全一致后，已删除 `.agents/`、`.superpowers/`、`docs/superpowers/plans/` 和 `skills-lock.json`。
+- 已知问题：`sensor_full` 存在 `/scan` QoS 不兼容、缺少 `base_link -> gps_link` TF、FAST-LIO 点云缺少 `time` 字段；非法 Web points 格式仍可能导致定义节点退出。
+- 下一步行动：单独规划并实施传感器链修复，优先处理 `/scan` QoS、GPS TF 和点云时间字段；之后再规划 Web payload 原子校验与安全状态机，避免混入本次结构迁移提交。
