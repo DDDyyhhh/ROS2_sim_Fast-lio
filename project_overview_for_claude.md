@@ -1,431 +1,553 @@
-# 🚜 自动割草机 — RK3588 实车开发指南
+# 自动割草机项目交接文档
 
-> 当前主交接文档。其他 overview 文档若与本文或 `CLAUDE.md` 冲突，以本文和 `CLAUDE.md` 为准。  
-> 面向 Claude 的项目总览文档  
-> 用途：在 RK3588 (Orange Pi 5 Plus) 上部署并继续开发
-
----
-
-## 一、项目概述
-
-自动割草机，支持用户在手机/电脑地图上画多边形框定区域 → 牛耕式全覆盖路径规划 → 沿路径执行割草。
-
-### 三层系统架构
-
-```
-PC (WSL2)                    RK3588 (Orange Pi 5 Plus)      STM32F407
-┌─────────────────┐          ┌──────────────────────┐      ┌──────────────┐
-│ 代码编辑 + 仿真  │          │ 上位机: ROS2 Humble  │      │ 下位机:       │
-│ ROS2 Humble     │          │                      │      │ 电机控制      │
-│ Ignition        │  git     │ • FAST-LIO SLAM      │ CAN  │ 刀盘控制      │
-│ Fortress        │ ────────→│ • 全覆盖路径规划      │────→│ 安全急停      │
-│ RViz2 可视化    │          │ • Nav2 导航           │      │ 编码器反馈    │
-└─────────────────┘          │ • RTK GPS 融合        │      └──────────────┘
-                              │ • 路径执行管理        │
-                              └──────────────────────┘
-```
-
-### 传感器
-
-| 传感器 | 型号 | 接口 | 用途 |
-|--------|------|------|------|
-| LiDAR | DJI Mid-360 | Ethernet | SLAM + 避障 |
-| RTK GPS | BT-982G1 | USB (串口) | 绝对定位 + 区域框定 |
-| IMU | BMI088 (Mid-360内置) | — | 惯导融合 |
+> 当前主交接文档。给完全没有上下文的新会话使用。  
+> 若本文与旧 overview 文档冲突，以本文和 `CLAUDE.md` 为准。  
+> 项目目标：Web/地图画区域 → ROS2 自动规划全覆盖路径 → 仿真/实车沿路径割草。
 
 ---
 
-## 二、已完成的工作 (Phase 0+1)
+## 1. 当前我们在做什么
 
-以下内容已在 WSL2 仿真中验证通过，代码已提交到 Git：
+### 当前阶段
 
-### 仿真环境
-- **50m×50m 室外草坪** — 含树木/花坛/石头/喷灌头障碍物
-- **随机障碍物生成脚本** — `random_obstacles.py --count 10 --append`
-- **Nav2 双模式参数** — 纯导航 (AMCL) + SLAM 导航 (FAST-LIO)
+项目处于 **硬件未到货前的软件闭环阶段**。
 
-### mower_coverage 包（全覆盖路径规划）
+Mid360 LiDAR 和 RTK GPS 还没到，因此暂时不做真实点云、真实 RTK、实车标定和户外割草验证。当前重点是：
 
-| 模块 | 文件 | 功能 |
-|------|------|------|
-| 牛耕式规划器 | `boustrophedon_planner.py` | 多边形→平行条带→障碍物跳过→转弯连接 |
-| 区域定义 | `area_definer.py` | 服务接口 + YAML 持久化 + RViz 可视化 |
-| 路径执行器 | `path_executor.py` | direct/Nav2 双模式、断点续割、边界保护 |
-| 覆盖率监控 | `coverage_monitor.py` | 栅格热力图 + 实时 m² 统计 |
-| 整合演示 | `coverage_demo.py` | 一键 `/coverage/plan_and_start` |
+1. 把 **Web 前端 → rosbridge → 多区域/多障碍物路径规划 → 仿真执行** 做成稳定闭环。
+2. 把系统整理成新会话、Codex、Claude Code 都能接手的结构化项目。
+3. 在硬件到货前完成尽可能多的软件准备：仿真验收、坐标系契约、地图校验、任务状态机、安全逻辑、Mock 传感器和回归测试。
 
-### 修复的问题
-- ✅ `ColorRGBA` 未导入 → path_executor crash
-- ✅ 越过目标点不停 → `_prev_min_dist` 越点检测
-- ✅ `type="ambient"` → `<scene><ambient>` SDF 兼容
-- ✅ 世界名硬编码 → `outdoor_grassland_50x50`
-- ✅ 服务类型错误 → area_definer 用 Trigger 替代
-- ✅ `nav2_msgs` 条件导入 → direct 模式不依赖
+### 当前主线任务
+
+| 优先级 | 任务 | 状态 |
+|---|---|---|
+| P0 | Web 端多区域/多障碍物绘制、发送、规划 | 已可用 |
+| P0 | 黄线规划路径不得进入红色障碍物 | 已修复并测试 |
+| P0 | `hill_full.launch.py` 一键启动 Web/rosbridge/规划系统 | 已修复并测试 |
+| P1 | 建立项目日报系统 | 已建立 |
+| P1 | 统一交接文档和 Claude 工作规则 | 进行中 |
+| P1 | 仿真端到端任务闭环验收 | 下一步 |
+| P2 | Mock RTK / Mock Mid360 | 待做 |
+| P2 | 实车 RTK + Mid360 + EKF 融合 | 等硬件到货 |
 
 ---
 
-## 三、RK3588 开发环境搭建
+## 2. 项目架构速览
 
-### 系统要求
+### 仓库与工作区
 
-```bash
-# 已在 RK3588 上测试通过
-cat /etc/os-release        # Ubuntu 22.04 LTS (Jammy)
-uname -m                   # aarch64 (ARM64)
+```text
+ROS 工作区: /home/yh/mower_ws
+仓库路径:   /home/yh/mower_ws
+主分支:     fix/web-launch-obstacle-planning
+远程仓库:   git@github.com:DDDyyhhh/ROS2_sim_Fast-lio.git
 ```
 
-### 安装 ROS2 Humble
+不要把 `build/`、`install/`、`log/` 当源码改。源码在：
 
-```bash
-# 如果还未安装
-sudo apt install ros-humble-desktop
-sudo apt install ros-humble-ros-gz-sim ros-humble-ros-gz-bridge
+```text
+/home/yh/mower_ws/src
 ```
 
-### 安装 CycloneDDS（RK3588 必选）
+### ROS 包
 
-FastRTPS 在 RK3588 上不稳定，必须用 CycloneDDS：
+| 包 | 作用 |
+|---|---|
+| `outdoor_sim` | Ignition Fortress 仿真、URDF/world、桥接、EKF、hill 全量 launch |
+| `fast_lio` | FAST-LIO LiDAR/IMU 里程计和建图，源码目录是 `src/fast_lio` |
+| `mower_coverage` | Web 前端、rosbridge server、区域定义、牛耕式规划、路径执行 |
 
-```bash
-sudo apt install ros-humble-cyclonedds
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-# 添加到 ~/.bashrc
-echo 'export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp' >> ~/.bashrc
+### 当前 Web 覆盖规划数据流
+
+```text
+浏览器 Leaflet 页面
+  ↓ 画区域/障碍物
+/web/areas
+  ↓
+multi_area_definer
+  ↓ 写入
+~/.local/state/mower_coverage/hill_mowing_areas.yaml
+  ↓ /multi_area/plan
+hill_boustrophedon
+  ↓ 发布
+/coverage/multi_path
+  ↓ /multi_area/plan_and_start
+multi_area_executor
+  ↓
+/cmd_vel
 ```
 
-### 克隆并编译
+### 当前主要启动命令
 
 ```bash
-mkdir -p ~/ros2_ws/src
-cd ~/ros2_ws/src
-git clone git@github.com:DDDyyhhh/ROS2_sim_Fast-lio.git ROS2_sim_Fast-lio
-
-# 安装依赖
-sudo apt install -y ignition-fortress
-pip install shapely
-
-# 编译
-cd ~/ros2_ws
-export MAKEFLAGS="-j8"
-colcon build --symlink-install
+cd /home/yh/mower_ws
+source install/setup.bash
+ros2 launch outdoor_sim hill_full.launch.py with_fastlio:=false with_ekf:=false with_lidar_scan:=false with_rosbridge:=true
 ```
 
-> ⚠️ RK3588 有 8 核但内存带宽有限，`-j8` 防止锁死。
+浏览器打开：
 
-### 修复 libexec 问题
+```text
+http://localhost:8080
+```
 
-```bash
-mkdir -p install/mower_coverage/lib/mower_coverage
-for exe in area_definer boustrophedon_planner coverage_demo coverage_monitor path_executor; do
-  ln -sf ../../bin/$exe install/mower_coverage/lib/mower_coverage/
-done
+rosbridge：
+
+```text
+ws://localhost:9090
 ```
 
 ---
 
-## 四、Phase 2：RTK + LiDAR 融合（硬件到货后执行）
+## 3. 已完成什么
 
-### 4.1 Mid-360 LiDAR 驱动
+### 3.1 Web + rosbridge + 静态前端
 
-Mid-360 使用 Livox SDK2（非 SDK1），需要 `livox_ros_driver2`：
+已完成：
 
-```bash
-cd ~/ros2_ws/src
-git clone https://github.com/Livox-SDK/livox_ros_driver2.git
+- `mower_coverage/web_frontend/index.html`
+- `mower_coverage/web_frontend/app.js`
+- `mower_coverage/mower_coverage/web_server.py`
+- `mower_coverage/launch/rosbridge_bridge.launch.py`
 
-# Mid-360 需要配置 msg_MID360.py 或对应的 JSON 配置
-# 关键：frame_id 需要对齐（设为 lidar_link）
+已验证：
+
+```text
+8080: web_server 正常监听
+9090: rosbridge_websocket 正常监听
+curl http://localhost:8080/index.html -> HTTP 200
 ```
 
-**FAST-LIO 配置调整（实车 vs 仿真）：**
+重要修复：
 
-| 参数 | 仿真值 | 实车建议 | 说明 |
-|------|--------|---------|------|
-| `lidar_type` | 2 (PointCloud2) | 1 (Livox) | 实车用 Livox 原生格式，仿真用模拟点云 |
-| `point_filter_num` | 3 | 1 | 实车点云稀疏，全量使用 |
-| `time_sync_en` | false | true | 实车需要时间同步 |
-| `extrinsic_est_en` | false | true → false | 先在线标定，收敛后固定 |
-| `scan_line` | 32 | 6 | Mid-360 只有 6 线（非重复扫描） |
+- `web_server.py` 改为可复用端口，避免 launch 快速重启后 `Address already in use`。
+- 只有真正 bind 成功后才打印“正在监听”。
+- 不再在线程里 `os.chdir()`，改用 `SimpleHTTPRequestHandler(directory=...)`。
 
-**关键：Mid-360 是固态 LiDAR（非重复扫描模式），FAST-LIO 的配置与机械式 LiDAR 不同。**
-
-### 4.2 BT-982G1 RTK GPS 驱动
+回归测试：
 
 ```bash
-sudo apt install ros-humble-nmea-navsat-driver
+python3 /home/yh/mower_ws/src/mower_coverage/tests/test_web_server.py
 ```
 
-**NTRIP 客户端（获取网络 RTK 差分数据）：**
+---
 
-BT-982G1 通过 NTRIP 获取 RTCM 差分修正，有两种方案：
+### 3.2 多区域、多障碍物路径规划
 
-**方案 A：ntrip_ros 包**
+核心文件：
+
+```text
+src/mower_coverage/mower_coverage/hill_boustrophedon.py
+src/mower_coverage/tests/test_hill_boustrophedon_obstacles.py
+```
+
+已修复：
+
+1. 单区域单障碍物：黄色路径不再进入红色障碍物。
+2. 单区域多障碍物：障碍物内部不再被黄色路径充满。
+3. 多区域多障碍物：规划不再报 `plan_transit` 缺失。
+4. 前端路径降采样不会删掉关键绕障点。
+5. 路径点和线段都要避开膨胀后的障碍物。
+
+关键策略：
+
+- 障碍物先 `buffer(inner_inflate)` 膨胀。
+- `work_area = area_polygon.difference(unary_union(obstacles))`。
+- 后处理 `_fix_obstacle_crossings()` 删除障碍物内部点，并为穿越线段插入绕障点。
+- `_downsample()` 保留速度变化点和会导致障碍物穿越的关键点。
+
+回归测试：
+
 ```bash
-cd ~/ros2_ws/src
-git clone https://github.com/LORD-MicroStrain/ntrip_ros.git
-# 配置账号：ntrip_host, port, mountpoint, user, password
+python3 /home/yh/mower_ws/src/mower_coverage/tests/test_hill_boustrophedon_obstacles.py
 ```
 
-**方案 B：自写 Python NTRIP 客户端**
+已观察结果：
+
+```text
+web 端多区域多障碍物已成功规划
+障碍物内无黄色路径穿过
+```
+
+---
+
+### 3.3 日报系统
+
+已建立：
+
+```text
+docs/daily/README.md
+docs/daily/2026-07-09.md
+```
+
+规则：
+
+当用户说“更新今天的日报”或类似指令时：
+
+1. 更新当天 `docs/daily/YYYY-MM-DD.md`。
+2. 更新 `docs/daily/README.md`。
+3. 自动提交，但 **只提交 `docs/daily/` 下的日报文件**。
+4. 不把代码改动混进日报提交。
+
+已提交：
+
+```text
+191622e Add daily report index
+3eb1136 Add daily report 2026-07-09
+```
+
+---
+
+### 3.4 交接文档整理
+
+当前主交接文档：
+
+```text
+project_overview_for_claude.md
+CLAUDE.md
+```
+
+旧 Gemini 文档已归档：
+
+```text
+docs/archive/project_overview_for_gemini_legacy_2026-07-02.md
+```
+
+原因：旧 Gemini 文档是 2026-07-02 的 Phase 0/1 设计，包含较多旧流程，容易误导新会话。
+
+已提交：
+
+```text
+dcb4aac Archive legacy Gemini handoff doc
+```
+
+---
+
+## 4. 当前卡在哪
+
+### 真正被硬件阻塞的内容
+
+以下内容必须等 Mid360 / RTK 到货后才能最终验证：
+
+| 阻塞项 | 原因 |
+|---|---|
+| Mid360 实机点云质量 | 需要真实 LiDAR 数据 |
+| LiDAR/IMU 外参 | 需要真实安装位置和传感器数据 |
+| RTK fix/float/single 状态 | 需要真实 RTK 设备和 NTRIP 环境 |
+| RTK 天线杆臂 | 需要测量实体安装偏移 |
+| EKF 实车融合参数 | 需要真实噪声、延迟、漂移 |
+| 户外割草验证 | 需要实车、场地、安全测试 |
+
+### 当前不该等硬件的内容
+
+这些可以继续推进：
+
+- 仿真端到端任务闭环。
+- Web 地图绘制校验。
+- 坐标系/单位/原点契约测试。
+- 覆盖率、路径长度、转弯次数、预计耗时等任务指标。
+- Mock RTK / Mock Mid360。
+- 任务状态机。
+- 软件安全 interlock。
+- CI 或一键 smoke test。
+- 操作员 Web 状态展示。
+
+---
+
+## 5. 下一步计划
+
+推荐顺序：
+
+### Step 1：做仿真端到端任务闭环
+
+目标：形成一个可重复演示、可验收的完整流程。
+
+验收标准：
+
+```text
+打开 http://localhost:8080
+→ 画多个区域和障碍物
+→ 发送到 ROS2
+→ 点击规划
+→ 生成无障碍物穿越路径
+→ 启动执行
+→ Web/ROS 显示执行状态
+→ 输出任务摘要
+```
+
+建议新增指标：
+
+- 路径总长度。
+- 预计执行时间。
+- 覆盖面积。
+- 已覆盖比例。
+- 跳过区域/异常区域。
+- 障碍物安全距离。
+
+---
+
+### Step 2：加地图绘制校验
+
+用户画错时要提前提示，不要等规划器报错。
+
+需要校验：
+
+- 区域多边形自交。
+- 障碍物在区域外。
+- 障碍物重叠。
+- 区域太小。
+- 通道太窄。
+- 障碍物距离边界太近。
+- 多区域命名/保存/清空逻辑。
+
+---
+
+### Step 3：整理坐标系契约
+
+必须写清并测试：
+
+```text
+浏览器经纬度
+GPS/RTK 经纬度
+map 局部米制坐标
+Ignition world 坐标
+body/base 坐标
+polygon/waypoint 坐标
+```
+
+尤其注意：
+
+- `app.js` 和 `multi_area_definer.py` 里都有硬编码原点。
+- 改原点必须两边同步，最好后续改成 ROS 参数或共享配置。
+
+---
+
+### Step 4：任务状态机和安全逻辑
+
+建议状态：
+
+```text
+idle
+map_loaded
+validating
+ready_to_plan
+planning
+planned
+executing
+paused
+recovering
+completed
+failed
+emergency_stop
+localization_bad
+sensor_stale
+```
+
+先在仿真和 Web 状态栏里跑通，不等硬件。
+
+---
+
+### Step 5：Mock RTK / Mock Mid360
+
+硬件到货前准备接口：
+
+- Mock `/gps/fix`。
+- Mock RTK fix quality。
+- Mock GPS 漂移、丢失、延迟。
+- Mock `/velodyne_points` 或障碍物检测。
+- Mock 传感器 stale/timeout。
+
+目标：硬件到货后替换 publisher，而不是第一次联调整个系统。
+
+---
+
+## 6. 绝对不要再踩的坑
+
+### 6.1 不要相信“进程在”就等于服务可用
+
+之前 `web_frontend_server` 进程存在，但 8080 没监听。
+
+必须验证：
+
+```bash
+ss -tlnp | grep -E ':(8080|9090)'
+curl -I http://localhost:8080/
+```
+
+---
+
+### 6.2 不要用 WSL 内部 IP 打开网页
+
+Windows 浏览器访问：
+
+```text
+http://localhost:8080
+```
+
+不要用 WSL 的 `26.x.x.x` 或 `192.168.x.x`，可能超时。
+
+---
+
+### 6.3 不要让降采样破坏绕障路径
+
+前端黄线是降采样后的 `/coverage/multi_path`。如果降采样删掉绕障关键点，前端会重新画出穿越障碍物的直线。
+
+改 `_downsample()` 后必须跑：
+
+```bash
+python3 src/mower_coverage/tests/test_hill_boustrophedon_obstacles.py
+```
+
+---
+
+### 6.4 不要只检查路径点，要检查线段
+
+路径点不在障碍物内，不代表相邻点连线不穿越障碍物。
+
+测试必须同时检查：
+
+```text
+Point inside obstacle: false
+LineString crosses/within/contains obstacle: false
+```
+
+---
+
+### 6.5 不要用全局障碍物合并框处理所有绕障
+
+一个区域里多个障碍物时，用所有障碍物的全局 bounds 绕障，可能导致绕第一个障碍物时绕进第二个障碍物。
+
+绕障时要基于实际阻挡当前线段的 obstacle 或 blocking union。
+
+---
+
+### 6.6 不要误删 `plan_transit()`
+
+多区域规划需要区域间过渡：
+
 ```python
-# 核心逻辑：socket 连接 caster，发送 NTRIP 请求
-# 将 RTCM 数据通过串口转发给 BT-982G1
-# 或者直接在 ROS 节点内解析，发布到 /rtcm
+transit = self.plan_transit(wp[-1], next_poly)
 ```
 
-### 4.3 robot_localization EKF 融合
+如果 `plan_transit()` 缺失，单区域正常，多区域会崩。
+
+---
+
+### 6.7 不要把日报提交和代码提交混在一起
+
+更新日报时只能提交：
+
+```text
+docs/daily/README.md
+docs/daily/YYYY-MM-DD.md
+```
+
+不要顺手提交 `CLAUDE.md`、源码、worktree、计划文件或临时文件。
+
+---
+
+### 6.8 不要把旧 Gemini 文档当当前架构
+
+旧文档在：
+
+```text
+docs/archive/project_overview_for_gemini_legacy_2026-07-02.md
+```
+
+它是历史参考，不是当前交接文档。
+
+当前以这两个为准：
+
+```text
+project_overview_for_claude.md
+CLAUDE.md
+```
+
+---
+
+### 6.9 不要盲信 README 里的旧参数
+
+已有文档里存在历史信息，例如：
+
+- `body` vs `base_link`
+- 32线 vs 64线 LiDAR
+- `mid360.yaml` vs `mid360_sim.yaml`
+- 旧 coverage demo vs 当前 hill coverage stack
+
+做修改前必须看当前源码、launch、config。
+
+---
+
+### 6.10 不要在 RK3588 上无限并行编译
+
+必须限制：
 
 ```bash
-sudo apt install ros-humble-robot-localization
+export MAKEFLAGS="-j8"
 ```
 
-**融合架构：**
-
-```
-RTK GPS ─→ nmea_navsat_driver ─→ /gps/fix (nav_msgs/Odometry)
-BT-982G1                                  |
-      + → navsat_transform_node ─→ /odom/gps (转换到 UTM)
-      |
-Mid-360 ─→ FAST-LIO ─→ /odom (SLAM 里程计)
-      |
-IMU ─────────────────→ /imu/data
-      |
-      + → EKF (ekf_localization_node) ─→ /odometry/filtered
-```
-
-**navsat_transform_node 配置要点：**
-```yaml
-# robot_localization 的 navsat_transform 需要正确设置
-# 否则 GPS 数据不会被正确转换到 UTM 坐标系
-frequency: 30
-delay: 3.0  # 等待 GPS 收敛到固定解
-magnetic_declination_radians: 0.0
-yaw_offset: 0.0
-zero_altitude: true
-publish_filtered_gps: true
-use_odometry_yaw: false
-wait_for_datum: true
-```
-
-### 4.4 坐标系对齐
-
-```yaml
-# 传感器外参
-# LiDAR→IMU: 由 FAST-LIO 在线标定
-# GPS 天线杆臂: 测量物理安装偏移 → 配置到 navsat_transform
-#  
-# TF 树（实车）:
-# map ──(FAST-LIO)──→ odom ──(static)──→ body
-#                                           ├── lidar_link
-#                                           ├── imu_link
-#                                           └── gps_link (GPS 天线相位中心)
-```
+避免 Orange Pi 5 Plus 编译时锁死。
 
 ---
 
-## 五、Phase 3：CAN 总线 + STM32 下位机
+## 7. 常用验证命令
 
-### 5.1 CAN 硬件接口
-
-RK3588（Orange Pi 5 Plus）有 CAN 控制器，通过 SPI 或内置 CAN：
+### 路径规划回归
 
 ```bash
-# 检查 CAN 接口
-ip link show can0
-# 如果不存在，需要设备树启用
-# Orange Pi 5 Plus 扩展引脚有 CAN 接口
+python3 /home/yh/mower_ws/src/mower_coverage/tests/test_hill_boustrophedon_obstacles.py
 ```
 
-### 5.2 ROS2 CAN 通信
+### Web server 回归
 
 ```bash
-sudo apt install ros-humble-can-msgs
+python3 /home/yh/mower_ws/src/mower_coverage/tests/test_web_server.py
 ```
 
-**协议设计（建议）：**
-
-**RK3588 → STM32（控制帧，50Hz）：**
-| ID | 数据 | 类型 | 说明 |
-|----|------|------|------|
-| 0x100 | [vx, vz] | float32 × 2 | 线速度 + 角速度 |
-| 0x101 | [blade_enable, reserved] | uint8 × 2 | 刀盘启停 |
-| 0x102 | [mode, reserved] | uint8 × 2 | 工作模式(停止/作业/回泊) |
-
-**STM32 → RK3588（状态帧，100Hz）：**
-| ID | 数据 | 类型 | 说明 |
-|----|------|------|------|
-| 0x200 | [left_wheel, right_wheel] | int32 × 2 | 编码器位置 |
-| 0x201 | [left_speed, right_speed] | float32 × 2 | 轮速 |
-| 0x202 | [battery_voltage, blade_current] | float32 × 2 | 电池/刀盘电流 |
-| 0x203 | [error_flags] | uint32 | 故障位(碰撞/倾覆/急停) |
-
-### 5.3 STM32F407 固件要点
-
-- CAN 中断接收控制指令 → PID 控制器 → PWM 输出给驱动桥
-- 编码器定时器捕获 → CAN 发送回 RK3588
-- 独立看门狗：100ms 内未收到 CAN 消息 → 自动停机
-- 刀盘电流检测：突增 50% → 碰撞检测 → CAN 发送急停
-
-### 5.4 安全机制
-
-| 安全功能 | 实现位置 | 触发条件 | 后果 |
-|---------|---------|---------|------|
-| 电子围栏 | RK3588 (path_executor) | GPS 超出区域 | 停止 + 报警 |
-| 碰撞检测 | STM32 (刀盘电流) | 电流突增 | 停止刀盘 + 后退 |
-| 倾覆检测 | STM32 (IMU) | 倾角 > 45° | 急停 |
-| 通信超时 | STM32 (看门狗) | 100ms 无 CAN | 自动停机 |
-| 物理急停 | STM32 (GPIO) | 按钮按下 | 切断驱动电源 |
-
----
-
-## 六、Phase 4：测试流程
-
-### 6.1 测试金字塔
-
-```
-级别 1: 纯仿真 (PC)
-  • ros2 launch outdoor_sim sim_launch.py
-  • ros2 launch mower_coverage coverage_planning.launch.py
-  • 验证路径规划 + 覆盖率 > 95%
-  
-级别 2: 半实物仿真 (RK3588)
-  • 跑算法，不驱动电机
-  • 验证 LiDAR 点云 + FAST-LIO 建图
-  • 验证 RTK GPS 收敛 + NTRIP 连接
-  
-级别 3: 小范围场地 (50m²)
-  • 安全封闭区域
-  • 验证全覆盖路径执行
-  • 验证安全机制（围栏/碰撞）
-  
-级别 4: 全尺寸草坪 (500-2000m²)
-  • 实车割草测试
-  • 验证长时间稳定性
-  • 验证断点续割
-```
-
-### 6.2 实车启动流程
+### Python 语法检查
 
 ```bash
-# 终端 1：启动 FAST-LIO SLAM
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-source ~/ros2_ws/install/setup.bash
-ros2 launch fast_lio mapping.launch.py config:=mid360.yaml
-
-# 终端 2：启动全覆盖规划系统
-source ~/ros2_ws/install/setup.bash
-ros2 launch mower_coverage coverage_planning.launch.py mode:=nav2
-
-# 终端 3：规划+执行
-source ~/ros2_ws/install/setup.bash
-ros2 service call /coverage/plan_and_start std_srvs/srv/Trigger
-
-# 终端 4：监控
-ros2 topic echo /coverage/statistics
-ros2 run tf2_tools view_frames
+python3 -m py_compile \
+  /home/yh/mower_ws/src/mower_coverage/mower_coverage/hill_boustrophedon.py \
+  /home/yh/mower_ws/src/mower_coverage/mower_coverage/web_server.py
 ```
 
----
-
-## 七、关键文件索引
-
-| 文件 | 说明 | 开发中的重要性 |
-|------|------|--------------|
-| `src/outdoor_sim/launch/sim_launch.py` | 仿真启动（PC 开发用，实车不用） | 低 |
-| `src/outdoor_sim/worlds/grassland_50x50.world` | 仿真世界（PC 开发用） | 低 |
-| `src/mower_coverage/mower_coverage/boustrophedon_planner.py` | **核心算法：牛耕式规划** | ⭐⭐⭐ |
-| `src/mower_coverage/mower_coverage/path_executor.py` | **路径执行器（需适配实车）** | ⭐⭐⭐ |
-| `src/mower_coverage/mower_coverage/coverage_demo.py` | **演示整合节点** | ⭐⭐ |
-| `src/mower_coverage/mower_coverage/area_definer.py` | 区域定义服务 | ⭐ |
-| `src/mower_coverage/mower_coverage/coverage_monitor.py` | 覆盖率监控 | ⭐ |
-| `src/mower_coverage/config/coverage_params.yaml` | **可调参数（速度/割幅等）** | ⭐⭐ |
-| `src/FAST_LIO_ROS2/config/mid360.yaml` | **实车需修改 LiDAR 类型** | ⭐⭐⭐ |
-| `src/outdoor_sim/config/nav2_params.yaml` | Nav2 纯导航参数（实车用） | ⭐⭐ |
-| `src/outdoor_sim/config/nav2_slam_params.yaml` | Nav2 SLAM 导航参数（实车用） | ⭐⭐ |
-| `OPERATION_GUIDE.md` | 仿真启动操作指南 | ⭐ |
-
----
-
-## 八、已知问题和风险
-
-| # | 问题 | 影响 | 对策 |
-|---|------|------|------|
-| 1 | **空旷区域 FAST-LIO 退化** | 50m×50m 仅有少量树干特征，LiDAR SLAM 可能发散 | GPS 辅助初始化 + 松耦合 EKF |
-| 2 | **WSL2 仿真不稳定** | Ignition 跑几分钟闪退 | 不影响 RK3588 实车，RK3588 有硬件 GPU |
-| 3 | **RTK 收敛时间** | BT-982G1 首次开机需 30-60s 收敛到固定解 | 启动延迟 60s 再开始规划 |
-| 4 | **NTRIP 网络依赖** | RTK 差分需要 4G/WiFi 网络 | 增加断网保护 + 回退到单点 GPS |
-| 5 | **滑移转向偏差** | 差速转弯在草地上会滑移，实际路径偏离规划 | 扩大割幅重叠率 + 定期修正 |
-| 6 | **行人检测** | 目前只依赖 Nav2 局部代价地图 | 可增加 Mid-360 点云行人识别 |
-| 7 | **mower_coverage libexec** | `ament_python` 不自动创建 libexec | 见 第三章 修复命令 |
-
----
-
-## 九、代码修改指引
-
-### 实车适配需修改的文件
-
-1. **`path_executor.py`** — 实车模式下需补充 CAN 速度指令发布
-2. **`coverage_params.yaml`** — 根据割幅调整 `cutting_width`
-3. **`mid360.yaml`** — `lidar_type` 改为 1（Livox 格式）
-4. **`sim_launch.py`** — 实车不需要启动（用 FAST-LIO 代替）
-
-### 新增文件清单（Phase 2-3）
-
-```
-src/
-├── livox_ros_driver2/          # Mid-360 驱动（从 Livox SDK 克隆）
-├── ntrip_ros/                  # NTRIP 客户端（或自写）
-├── mower_can_bridge/           # CAN 总线 ROS2 驱动（新建包）
-│   ├── mower_can_bridge/
-│   │   └── can_bridge.py       # socketcan ↔ ROS2 消息转换
-│   ├── config/can_params.yaml
-│   └── launch/can_bridge.launch.py
-└── mower_coverage/             # 已有包，需修改
-    └── mower_coverage/
-        └── path_executor.py    # 增加 CAN 控制模式
-```
-
----
-
-## 十、与 Claude 协作建议
-
-### 提问模板
-
-```
-在 RK3588 上部署割草机项目：
-  - 当前工作：X（如：编译、测试 LiDAR、配置 RTK）
-  - 遇到问题：Y（如：编译报错、点云不显示）
-  - 已尝试：Z（如：已装驱动）
-```
-
-### 常用调试命令
+### Web/rosbridge 端口检查
 
 ```bash
-# 检查 ROS2 环境
-echo $RMW_IMPLEMENTATION
-ros2 topic list
+ss -tlnp | grep -E ':(8080|9090)'
+curl -I http://localhost:8080/
+```
 
-# 检查硬件
-ip link show can0
-ls /dev/ttyUSB*        # BT-982G1 串口
-ls /dev/ttyACM*        # 可能的 GPS 串口
+### 启动全系统最小模式
 
-# 检查 CAN
-candump can0
-
-# 检查 GPS
-stty -F /dev/ttyUSB0 115200
-cat /dev/ttyUSB0       # 应看到 $GPGGA, $GPRMC 等 NMEA 语句
-
-# FAST-LIO 测试
-ros2 launch fast_lio mapping.launch.py config:=mid360.yaml
-
-# 全覆盖规划
-ros2 service call /coverage/plan std_srvs/srv/Trigger
-``` 
+```bash
+cd /home/yh/mower_ws
+source install/setup.bash
+ros2 launch outdoor_sim hill_full.launch.py with_fastlio:=false with_ekf:=false with_lidar_scan:=false with_rosbridge:=true
+```
 
 ---
 
-**项目仓库：** `git@github.com:DDDyyhhh/ROS2_sim_Fast-lio.git`  
-**当前分支：** `main` (Phase 0+1 已完成)  
-**下一阶段：** Phase 2 (硬件到货后)
+## 8. 近期重要提交
+
+```text
+81d04cb Fix web launch and obstacle path planning
+191622e Add daily report index
+3eb1136 Add daily report 2026-07-09
+dcb4aac Archive legacy Gemini handoff doc
+```
+
+远程保存分支：
+
+```text
+origin/fix/web-launch-obstacle-planning
+```
+
+注意：本地可能比远程多日报和文档提交；推送前先检查：
+
+```bash
+git status --short --branch
+git log --oneline -5
+```

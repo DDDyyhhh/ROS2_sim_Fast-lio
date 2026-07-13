@@ -73,7 +73,7 @@
 | **DDS** | Eclipse CycloneDDS | （默认 FastRTPS 不兼容 RK3588） |
 | **仿真引擎** | Ignition Fortress (Gazebo Sim) | 6.x, SDF 1.8 |
 | **仿真桥接** | ros_gz_bridge / ros_gz_sim | Humble 官方 |
-| **SLAM 建图** | FAST-LIO 2 (FAST_LIO_ROS2) | 自编译 aarch64 |
+| **SLAM 建图** | FAST-LIO 2 (`fast_lio`) | 自编译 aarch64 |
 | **导航堆栈** | Nav2 (nav2_bringup) | Humble 官方 |
 | **URDF 解析** | robot_state_publisher + xacro | Humble 官方 |
 | **可视化** | RViz2 + nav2_rviz_plugins | Humble 官方 |
@@ -110,8 +110,8 @@ sudo apt install -y ros-humble-teleop-twist-keyboard
 ### 2. 克隆并编译
 
 ```bash
-git clone git@github.com:DDDyyhhh/ROS2_sim_Fast-lio.git ~/ros2_ws
-cd ~/ros2_ws
+git clone git@github.com:DDDyyhhh/ROS2_sim_Fast-lio.git /home/yh/mower_ws
+cd /home/yh/mower_ws
 
 # 环境变量（每次新终端都执行）
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
@@ -244,7 +244,7 @@ map ──(static)──→ odom ──(static)──→ camera_init ──(FAST
 # ── 0. 环境变量（每次新终端都执行） ───────────────
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export MAKEFLAGS="-j8"
-source ~/ros2_ws/install/setup.bash
+source /home/yh/mower_ws/install/setup.bash
 
 # ── 1. 启动仿真（Headless） ─────────────────────
 export LIBGL_ALWAYS_SOFTWARE=1
@@ -268,17 +268,17 @@ xvfb-run -a ros2 launch outdoor_sim sim_launch.py
 
 # 终端 2：启动 FAST-LIO SLAM
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-source ~/ros2_ws/install/setup.bash
+source /home/yh/mower_ws/install/setup.bash
 ros2 launch fast_lio mapping.launch.py config:=mid360_sim.yaml
 
 # 终端 3：手动控制小车遍历环境
 ros2 topic pub /cmd_vel geometry_msgs/Twist "{linear: {x: 0.3}, angular: {z: 0.2}}"
 
 # 保存 PCD 点云地图
-ros2 run fast_lio save_map --save_path ~/ros2_ws/my_3d_map.pcd
+ros2 run fast_lio save_map --save_path /home/yh/mower_ws/my_3d_map.pcd
 
 # 转换为 Nav2 PGM 地图
-python3 ~/ros2_ws/pcd_to_pgm.py
+python3 /home/yh/mower_ws/pcd_to_pgm.py
 
 # 关掉 FAST-LIO，启动 Nav2 纯导航
 ros2 launch outdoor_sim nav2_sim_launch.py
@@ -288,7 +288,7 @@ ros2 launch outdoor_sim nav2_sim_launch.py
 
 ```bash
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-source ~/ros2_ws/install/setup.bash
+source /home/yh/mower_ws/install/setup.bash
 export LIBGL_ALWAYS_SOFTWARE=1
 
 # 有桌面环境
@@ -342,7 +342,7 @@ my_3d_map.pgm + my_3d_map.yaml (Nav2 map_server)
 ## 项目结构
 
 ```
-~/ros2_ws/
+/home/yh/mower_ws/
 ├── src/
 │   ├── outdoor_sim/                          # 仿真包
 │   │   ├── worlds/grass_terrain.world        # SDF 1.8 世界文件
@@ -361,7 +361,7 @@ my_3d_map.pgm + my_3d_map.yaml (Nav2 map_server)
 │   │   │   └── tf_waiter.py                  # TF 等待辅助
 │   │   └── CMakeLists.txt + package.xml
 │   │
-│   ├── FAST_LIO_ROS2/                        # SLAM 建图包
+│   ├── fast_lio/                             # SLAM 建图包
 │   │   ├── config/mid360_sim.yaml            # 仿真配置
 │   │   ├── launch/ + src/ + include/
 │   │   └── package.xml

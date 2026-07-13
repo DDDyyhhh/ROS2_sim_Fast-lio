@@ -161,7 +161,7 @@ if __name__ == "__main__":
     parser.add_argument("--append", action="store_true", help="追加到世界文件")
     parser.add_argument(
         "--world",
-        default="/home/yh/mower_ws/src/ROS2_sim_Fast-lio/src/outdoor_sim/worlds/grassland_50x50.world",
+        default="/home/yh/mower_ws/src/outdoor_sim/worlds/grassland_50x50.world",
         help="世界文件路径",
     )
     args = parser.parse_args()

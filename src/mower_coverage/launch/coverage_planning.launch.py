@@ -13,6 +13,7 @@ coverage_planning.launch.py — 全覆盖路径规划启动文件
 """
 
 import os
+from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -24,12 +25,15 @@ from launch_ros.actions import Node
 def generate_launch_description():
     pkg_dir = get_package_share_directory('mower_coverage')
     config_file = os.path.join(pkg_dir, 'config', 'coverage_params.yaml')
+    state_dir = Path.home() / '.local' / 'state' / 'mower_coverage'
 
     # 启动参数
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
     frame_id = LaunchConfiguration('frame_id', default='map')
     mode = LaunchConfiguration('mode', default='direct')
     cutting_width = LaunchConfiguration('cutting_width', default='0.5')
+    area_file = LaunchConfiguration('area_file')
+    checkpoint_file = LaunchConfiguration('checkpoint_file')
 
     declare_use_sim_time = DeclareLaunchArgument(
         'use_sim_time', default_value='true',
@@ -43,6 +47,11 @@ def generate_launch_description():
     declare_cutting_width = DeclareLaunchArgument(
         'cutting_width', default_value='0.5',
         description='割幅宽度 (m)')
+    declare_area_file = DeclareLaunchArgument(
+        'area_file', default_value=str(state_dir / 'mowing_area.yaml'))
+    declare_checkpoint_file = DeclareLaunchArgument(
+        'checkpoint_file',
+        default_value=str(state_dir / 'coverage_checkpoint.json'))
 
     # 1. 区域定义节点
     area_definer = Node(
@@ -53,7 +62,7 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': use_sim_time,
             'frame_id': frame_id,
-            'area_file': os.path.expanduser('~/mowing_area.yaml'),
+            'area_file': area_file,
         }],
     )
 
@@ -85,7 +94,7 @@ def generate_launch_description():
             'mode': mode,
             'max_linear_speed': 1.0,
             'goal_tolerance': 0.3,
-            'checkpoint_file': os.path.expanduser('~/coverage_checkpoint.json'),
+            'checkpoint_file': checkpoint_file,
         }],
     )
 
@@ -107,6 +116,8 @@ def generate_launch_description():
         declare_frame_id,
         declare_mode,
         declare_cutting_width,
+        declare_area_file,
+        declare_checkpoint_file,
         area_definer,
         coverage_demo,
         path_executor,

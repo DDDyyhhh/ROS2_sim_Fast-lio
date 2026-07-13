@@ -18,7 +18,7 @@ package_name = 'mower_coverage'
 setup(
     name=package_name,
     version='0.1.0',
-    packages=[package_name],
+    packages=find_packages(),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -39,16 +39,16 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'boustrophedon_planner = mower_coverage.boustrophedon_planner:main',
-            'area_definer = mower_coverage.area_definer:main',
-            'path_executor = mower_coverage.path_executor:main',
-            'coverage_monitor = mower_coverage.coverage_monitor:main',
-            'coverage_demo = mower_coverage.coverage_demo:main',
+            'boustrophedon_planner = mower_coverage.legacy.boustrophedon_planner:main',
+            'area_definer = mower_coverage.legacy.area_definer:main',
+            'path_executor = mower_coverage.legacy.path_executor:main',
+            'coverage_monitor = mower_coverage.legacy.coverage_monitor:main',
+            'coverage_demo = mower_coverage.legacy.coverage_demo:main',
             # === 斜坡场景 + 多区域新增节点 ===
-            'multi_area_definer = mower_coverage.multi_area_definer:main',
-            'hill_boustrophedon = mower_coverage.hill_boustrophedon:main',
-            'multi_area_executor = mower_coverage.multi_area_executor:main',
-            'web_server = mower_coverage.web_server:main',
+            'multi_area_definer = mower_coverage.mission.multi_area_definer:main',
+            'hill_boustrophedon = mower_coverage.planning.hill_boustrophedon:main',
+            'multi_area_executor = mower_coverage.execution.multi_area_executor:main',
+            'web_server = mower_coverage.adapters.web_server:main',
         ],
     },
 )

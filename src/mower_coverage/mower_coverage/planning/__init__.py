@@ -1,0 +1,1 @@
+"""Coverage path planning."""

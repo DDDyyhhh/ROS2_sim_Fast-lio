@@ -32,7 +32,7 @@ inter_area_transit:
 # 路径执行参数
 executor:
   goal_tolerance: 0.3       # 目标点到达容差 (m)
-  checkpoint_file: "~/hill_coverage_checkpoint.json"
+  checkpoint_file: "~/.local/state/mower_coverage/hill_coverage_checkpoint.json"
 
 # 安全参数
 safety:

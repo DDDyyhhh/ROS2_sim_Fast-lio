@@ -18,7 +18,7 @@ planner:
 executor:
   mode: "direct"            # 执行模式: "direct" 或 "nav2"
   goal_tolerance: 0.3       # 到达目标点的容差 (m)
-  checkpoint_file: "~/coverage_checkpoint.json"  # 断点文件
+  checkpoint_file: "~/.local/state/mower_coverage/coverage_checkpoint.json"
 
 # 安全参数
 safety:
