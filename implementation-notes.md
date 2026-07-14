@@ -10,6 +10,12 @@
 - 交接建议只重构 `plan_from_areas()` 的 seam，但红灯继续暴露出 seam 起点贴近障碍物下边界时现有绕障候选全部失败；因此补充“先向外下移再横向”的候选，并让安全余量允许明确远离障碍物的首段，范围仍限于共享绕障判定逻辑。
 - 区域间连接改为“前一区域末点 → 后一区域首个覆盖点”，不再插入可能落入膨胀障碍物的最近边界点；保留 `plan_transit()` 作为已有接口，未删除或扩展其签名。
 - 代码审查发现 seam 绕障失败时若继续追加后续覆盖点，会重新生成未验证的跨障线段；增加 fail-closed 检查，无法安全连接时让本次规划失败而不发布不完整路径。
+- 本轮运行态诊断需要 DDS/Gazebo 的本地网络接口与可写日志目录；沙箱内启动会失败，因此仅将 ROS 日志重定向到 `/tmp`，真实 ROS 诊断命令经获准的本地环境执行，未把环境错误当作代码结论。
+- 为验证重复 TF，曾在一个临时运行实例中停止 `odom_to_tf`；该 launch 随后整体退出，第一次 datum 服务探针没有得到有效结果。重新启动干净实例后才完成 datum 服务验证，源码和工作区状态未被该探针改变。
+- 交接原计划只要求确认唯一 `odom → body` owner；运行态同时证实仿真 GPS 未配置 datum 会把 `/odom/gps` 推到百万米级，因此将“为仿真固定 GPS 配置正确 datum”纳入同一 TF 稳定性最小修复，真实硬件 GPS 仍不改。
+- Web 输入错误的“明确错误”沿用现有单向 `/web/areas` topic 能力，以 `multi_area_definer` 的 error log 返回；未新增响应 topic 或修改前端协议，避免把一次性安全修复扩展成新的通信契约。
+- 完整 profile 实际 EKF 与 FAST-LIO 输出约 20 Hz；将仿真 EKF 频率从 30 Hz 调整到 20 Hz，只匹配已测得的输入负载，未改变融合变量或硬件配置。
+- 本轮诊断时当前 ROS/Gazebo 进程不在本会话可见的进程表中，因此没有擅自启动第二个仿真实例；结论基于同一工作区保存的完整运行日志和可重复的内存控制探针，下一窗口必须补一次实时 topic 快照。
 
 # Discovered edge cases
 
@@ -32,12 +38,22 @@
 - 本轮进一步确认：两个带障碍物区域一起调用 `plan_from_areas()` 时，局部路径分别为约 960/1974 点，但最终全局 `_fix_obstacle_crossings()` 从 2936 点删到 960 点，区域 2 变为 0 点；全局流式后处理在 transit 失败后保留区域 1 末点，把后续区域 2 点全部当成同一条待绕障线段处理并跳过。
 - 本轮 seam 修复后发现：区域 1 末点仅在自身膨胀障碍物外约 `0.0001m`，旧安全余量会把向下离开的垂直线段误判为危险；只放宽“远离障碍物”的首段即可恢复安全连接，不需要删除区域覆盖点。
 - 本轮审查新增边界：`_fix_obstacle_crossings()` 在极端失败时会返回起点；seam 调用必须验证终点已到达首个覆盖点，否则不能继续拼接后续点。
+- 本轮新增 Web/性能边界：一次 payload 中任一点为数组、坐标非有限数字、名称非字符串或多边形无效都必须在状态替换前拒绝；完整 Web+Scan 长跑会让 FAST-LIO 进入无有效点循环，不能只用 EKF 频率判断传感器健康。
+- 包级测试在 Codex 沙箱内运行时，Web 端口复用用例会因创建临时 TCP socket 被拒绝而报 `PermissionError`；同一用例及完整 `mower_coverage` 测试在获准本地环境通过，不能把该沙箱限制当作代码回归。
+- `sensor_full` 历史长跑 `/tmp/mower_sensor_full_final_20hz.log` 统计到约 43,048 次 `lidar loop back, clear buffer`、8,475 次 `No point, skip this scan` 和 230 次 `No Effective Points`；这是点云时间顺序/处理负载链的强证据，不应继续只调 EKF 频率。
+- `clock_filter.py` 只保证 `/clock_raw` → `/clock` 单调，不会改写 `/velodyne_points.header.stamp`；FAST-LIO 的 PointCloud2 回调遇到回退时间会清空 buffer 后仍接收旧帧，形成“回退→丢帧→无有效点”的候选闭环。
+- `MultiAreaExecutor` 的 safe 逻辑在前方 ±30° 命中 `<0.8m` 有效点时不进入目标跟踪；内存探针持续注入正前方 0.5m 点，40 次循环前进速度为 0，末次命令为 `linear=-0.3, angular=0.6`。
+- 规划器路径和执行器/前端位置的契约仍分裂：路径 `frame_id=map`，`map→odom` 当前为单位变换，但执行器和网页都订阅原始 `/odom`，没有使用 `/odometry/filtered`；需要用同一时刻坐标和速度实测后再决定是否改为融合定位。
 
 # Questions for review
 
 - 已处理：`/scan` QoS、`body -> gps_link` frame 契约、PointCloud2 缺失 `time`、点云输入 remap、GPS 输出 remap，以及 navsat TF 等待窗口。
-- 后续性能专项是否需要处理仿真高负载下 EKF 30 Hz 更新率提示，以及长时间运行中偶发的 FAST-LIO `No Effective Points`？
-- `sensor_full` 的 RViz2 车体闪烁是否需要单独专项处理：优先确认唯一 `odom → body` TF 发布者、验证 `/joint_states` 的四个轮关节消息，再补最小 RViz/TF 回归验收。
+- 后续性能专项仍需处理长时间高负载下 FAST-LIO `No Effective Points` / `No point, skip` 与由此造成的 EKF 阻塞；20 Hz 只解决 EKF 与 FAST-LIO 输入速率不匹配，完整长跑仍出现少量 update-rate failure，不能宣称性能专项完成。
+- 已处理：`sensor_full` 的 RViz2 车体闪烁。修复后 `/tf` 仅保留 EKF、FAST-LIO、robot_state_publisher 三个 publisher，`/tf_static` 仅一个 `map → odom`，四轮 frame pair 持续发布。
+- 若产品需要浏览器直接显示 Web payload 错误，需要另行确认响应 topic/服务契约；当前实现按现有单向 `/web/areas` 协议记录明确 error log，不向浏览器发送新消息。
+- 新问题的下一步应先固定点云时间单调性和执行器实际停车原因，再处理 EKF 参数；不要在没有 `/scan`、`/velodyne_points` 时间戳和 `/cmd_vel` 实测数据时直接降低滤波频率或放宽安全阈值。
+- 产品/架构待确认：覆盖执行与网页机器人位置应继续使用仿真原始 `/odom`，还是统一改用 EKF `/odometry/filtered`；前者便于仿真验收，后者才符合当前融合定位链，不能默默混用。
+- 下一窗口需要 A/B 验证：关闭 FAST-LIO/EKF、关闭 `/scan` 或使用 direct 执行模式分别测试“控制器能否驶向首个目标点”；每次只改变一个开关并记录 `/cmd_vel`、`/odom`、`/scan` 和执行状态。
 - 路径专项的验收必须先证明完整全局路径（包括区域间 transit 和前端降采样后的 `/coverage/multi_path`）不与任一膨胀障碍物相交，再调整路径密度参数。
 - 本轮路径专项已建立最小红灯：`test_multi_area_transit_avoids_next_area_obstacle`；修复前失败点为第二个区域左边界的 transit 终点进入膨胀障碍物，修复后需同时复验原始路径与降采样路径。
 - 本轮审查新增红灯：`test_global_detour_avoids_all_separated_obstacles`；修复前命中 `(5.3, 1.9) → (2.7, -0.2)`，说明候选点安全不等于候选线段安全。
@@ -60,27 +76,33 @@
 - 本轮新验证：单区域斜障碍回归先失败（415 点）后通过（epsilon 后 1974 点）；双区域真实回归先出现区域 2 为 0 点，完成 seam 修复后覆盖与全局安全断言均通过。
 - 本轮新验证：8 项障碍物路径回归、5 项旧规划器回归、Python 语法检查、`git diff --check`、三包构建和 Web 回归均通过；`colcon test` 最终为 14 tests / 0 errors / 0 failures。
 - 本轮审查：按用户 AGENTS 的 Standards 和本交接 spec 手工完成双轴 review；未发现阻断性 standards/spec finding。当前工具未提供该 skill 要求的并行 sub-agent，因此未伪造子代理报告。
+- 本轮 RViz/TF 诊断：干净 `sensor_full` 运行中 `/tf` 有 `robot_state_publisher`、`laser_mapping`、`ekf_localization`、`odom_to_tf` 四个 publisher；frame-pair probe 观察到 `odom → body` 持续发布，停止 `odom_to_tf` 后 publisher 降为 3 个且该 pair 仍存在，确认 EKF 是保留 owner。`/joint_states` 同时包含四个轮关节。
+- 本轮 GPS 诊断：默认 navsat 日志为 Datum `(0,0,0)`，`/odom/gps` 约为 `(31368,2495923)`；通过 `/datum` 注入仿真 GPS 的 `22.5431,114.0579` 后，`/odom/gps` 回到约 `(0.04,0.18)`，直接验证原点错配。由于 EKF 已在坏状态运行，旧实例的 z 状态仍不可用于验收，需在代码修复后清洁重启验证。
+- 本轮修复验证：先新增 3 项 sensor-chain 红灯，再修改 `hill_sim_launch` 的中继开关、`hill_full` 的默认 owner、`hill_ekf` 的 datum/TF 拓扑并全部转绿；清洁运行中 `/tf` publisher=3、`/tf_static` publisher=4（含唯一 `map → odom`）、`/odom/gps≈(0.04,0.18,0)`、`/odometry/filtered≈(0.04,0.18,-0.54)`，四轮 frame pair 全部存在。
+- 本轮性能基线：修复后 `/odometry/filtered≈30 Hz`、`/Odometry≈20 Hz`、`/velodyne_points≈14.6 Hz`（后段有一次负载抖动）、`/joint_states≈200 Hz`；清洁运行日志未出现 EKF 更新率失败、TF 错误或持续 `No Effective Points`。
+- 本轮 Web 契约验证：数组点 payload 先在回调级红灯复现 `.get` 崩溃，修复后错误批次保留旧任务且下一批合法对象点可继续处理；真实 `/web/areas` topic 运行态同样保持 `/multi_area_definer` 在线，并记录 `Web 区域数据校验失败`，随后成功提交 1 个区域。
+- 本轮全量回归：新增 payload 测试、8 项 sensor-chain 测试、障碍物回归、规划器回归和 `mower_coverage` colcon 测试通过；Web socket 端口测试在获准本地环境通过。`outdoor_sim` colcon 仍被仓库既有 flake8/pep257 和离线 xmllint schema 失败阻断，未修改无关基线。
+- 默认完整 profile 最终验收：HTTP `8080` 返回 200，rosbridge `9090` 启动，`/scan` publisher/subscriber 均 BEST_EFFORT，`/tf` publisher=3 且无 `odom_to_tf`，GPS/EKF 保持本地坐标；20 Hz EKF 契约通过，但长跑仍记录 FAST-LIO 无有效点及少量 EKF 阻塞提示。
+- 交接尾项复验：独立 Web payload、传感器、障碍物、规划器和 `git diff --check` 全部通过；`mower_coverage` 首次沙箱运行 15/16 通过且唯一失败为 socket `PermissionError`，获准本地环境完整重跑为 16 tests / 0 errors / 0 failures。
+- 本轮诊断证据：历史完整运行日志出现用户给出的 `Failed to meet update rate! Took 0.945s`，并同时存在大量 LiDAR timestamp 回退/缓冲清空；静态检查确认 FAST-LIO 20Hz 仿真输入仍配置 `scan_rate: 10`、PointCloud2 无 per-point `time`，这些是下一窗口的单变量探针候选。
+- 本轮控制探针：不启动 ROS/Gazebo 的内存 harness 已验证 safe 避障状态会完全压制前进命令；无障碍状态同一控制循环会产生正向速度，说明控制器本身不是“永远不发布 cmd_vel”，需要优先检查真实 `/scan` 命中情况。
+- 本轮范围：没有修改源码、参数或 launch；当前结论是诊断和下一步执行计划，不宣称 FAST-LIO 或路径执行问题已经修复。
 
 # Summary
 
-- Deviations count: 10（本轮新增 seam 绕行候选、方向感知安全余量判定和 fail-closed 连接检查，均为局部安全修复）。
-- Most likely revisit: 仿真高负载下 EKF 30 Hz 更新率与 FAST-LIO 长时间有效点质量。
-- Edge cases found: 17（新增扫描线端点浮点内缩导致后处理卡死、全局 transit 失败吞掉后续区域路径、seam 起点贴边导致安全余量拒绝向外连接，以及 seam 失败后继续拼接的未验证线段）。
-- Verification status: 本专项当前验证全绿：8 项障碍物路径回归、5 项旧规划器回归、14 项 `colcon test`、三包构建、语法检查、diff 检查和 Web socket 回归均通过；仅保留交接中已知的性能/传感器后续问题。
-- Next session should read first: 本文件的 Questions for review 与 Active Handoff；路径 seam 专项已完成，下一窗口从 RViz/TF 根因诊断开始。
+- Deviations count: 15（包含本轮运行环境处理、TF owner 条件化、仿真 GPS datum、Web 单向错误日志和 EKF 20 Hz 负载匹配）。
+- Most likely revisit: PointCloud2 header 时间回退导致 FAST-LIO 清空缓冲，并与 safe 模式近距离扫描误停车共同造成“原地附近走不到首个目标点”。
+- Edge cases found: 28（包含重复动态/静态 TF、GPS 原点错配、数组点 payload、非法几何批次、单向 Web 错误反馈、长跑点云阻塞、沙箱 TCP 限制、点云时间回退、safe 扫描误停车和原始/融合里程计契约分裂）。
+- Verification status: 9 项 sensor-chain、2 项 Web payload、障碍物/规划器回归、mower_coverage 16 项 colcon 测试、三包构建、HTTP/Web socket 和默认 sensor_full 运行验收通过；outdoor_sim 仍保留既有 lint/xmllint 基线失败。
+- Next session should read first: 本文件新增的 Questions for review、Verification evidence 与 Active Handoff；先做点云时间戳/`/scan`/`/cmd_vel` 实时快照和单变量 A/B，再决定 FAST-LIO、safe 避障或 odom 契约的修复顺序。
 
 ## Active Handoff（当前交接进度）
 
-- 当前进度：路径 seam 专项已完成并提交；下一阶段聚焦传感器运行稳定性、RViz TF 闪烁和 Web 输入契约安全。
-- 当前提交：`HEAD`（最新 Handoff 提交；规划器实现提交为 `262e16c`）；当前分支为 `fix/web-launch-obstacle-planning`。
-- 验证状态：上一轮全量构建、5 项传感器契约用例、6 项障碍物路径回归、12 项包测试和 Web 回归均通过；本轮 8 项障碍物路径回归、14 项 `colcon test`、三包构建和 Web 回归均通过。
+- 当前进度：路径 seam、sensor_full TF/GPS/RViz、Web payload 原子校验和默认 profile 验收已完成；本轮新增“执行器长期在起点附近、FAST-LIO 无有效点、EKF 超时”诊断，尚未修改源码，已形成下一窗口的最小验证顺序。
+- 当前提交：本轮代码与交接记录已提交到本地 `HEAD`；当前分支为 `fix/web-launch-obstacle-planning`，未推送远端。
+- 验证状态：9 项 sensor-chain、2 项 Web payload、障碍物与规划器回归、`mower_coverage` 16 项 colcon 测试、三包构建和获准本地 Web socket/HTTP 回归通过；`outdoor_sim` lint/xmllint 仍有既有基线失败。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
-- 工具清理：确认项目内 `.agents/skills` 与全局 skills 完全一致后，已删除 `.agents/`、`.superpowers/`、`docs/superpowers/plans/` 和 `skills-lock.json`。
-- 已知问题：清洁运行仍有少量 EKF “Failed to meet update rate” 性能提示；长时间高负载运行曾出现 FAST-LIO `No Effective Points`；`sensor_full` 的 RViz2 车体闪烁与四轮 `No transform` 尚未修复；非法 Web points 格式仍可能导致定义节点退出。
-- 本次实现：完成两阶段区域规划；先收集全部膨胀障碍物，再只对相邻区域首尾连接调用绕障；增加下方绕行候选、远离障碍物的贴边首段判定和 seam fail-closed 检查。测试文件未再扩展。
-- 下一步行动（新窗口直接执行）：
-  1. **RViz/TF 根因诊断**：在 `sensor_full` 中确认唯一 `odom → body` TF 发布者，检查 EKF 是否继续发散，并验证 `/joint_states` 是否包含四个轮关节；验收为车体与四轮 TF 稳定、无重复 `odom → body` 发布。
-  2. **传感器性能专项**：在 TF 稳定后重新采集 EKF 更新率和 FAST-LIO `No Effective Points` 基线，再决定最小参数或代码修复；不要在 TF 冲突未解决时直接调性能参数。
-  3. **非法 Web payload 加固**：对 `points` 做原子格式校验，非法输入返回明确错误且节点不退出，并补充回归测试。
-  4. **最终验收**：重跑 `sensor_full` 运行检查、相关包测试和 Web 回归；每个问题单独记录根因、修改和验证证据。路径 seam 专项保持不变。
-- 当前会话进度：代码审查发现的 seam 失败分支已修正，完整验证全绿；当前提交为 `HEAD`，规划器、回归测试和实施笔记已提交。
+- 已知问题：完整高负载长跑同时出现大量 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；20 Hz 只匹配 EKF 目标频率，尚未解决点云 header 时间回退或 CPU 负载。执行器 safe 模式还可能因真实 `/scan` 近距离命中而原地转向/倒车；原始 `/odom` 与融合 `/odometry/filtered` 的控制契约也未决。若产品需要浏览器可见的校验错误，仍需另定义响应 topic/服务契约。
+- 本次实现：`hill_full` 默认关闭 `/odom→TF` 中继，`hill_ekf` 删除重复 `map→odom`、改为 `odom→camera_init`、配置仿真 GPS datum，并将仿真 EKF 频率从 30 Hz 调整为 20 Hz；`hill_sim/web_minimal` 默认中继行为保留。`multi_area_definer` 先校验整批 Web payload，再原子替换任务状态，非法批次保留旧任务。
+- 当前会话进度（实时）：已读取历史运行证据并复现 safe 控制器的“持续障碍命中则无前进”行为；本轮未改源码，交接尾项 `mower_coverage` 16 项包级测试已在授权本地环境全绿。
+- 下一窗口应先读：本文件的 Questions for review、Verification evidence 与 Known issues；第一阶段只采集 topic/参数/命令证据并做单变量 A/B，不要自动推送。

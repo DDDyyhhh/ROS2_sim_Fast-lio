@@ -134,6 +134,58 @@ class MultiAreaDefiner(Node):
         dy = (lat - self._gps_origin_lat) * 110540.0
         return dx, dy
 
+    def _validate_web_payload(self, data):
+        """Validate the Web batch before it can mutate the active mission."""
+        if not isinstance(data, dict):
+            raise ValueError('payload 必须是 JSON 对象')
+        if data.get('action') != 'set_areas':
+            raise ValueError(f'未知 action: {data.get("action", "")}')
+
+        web_areas = data.get('areas')
+        if not isinstance(web_areas, list) or not web_areas:
+            raise ValueError('areas 必须是非空数组')
+
+        for area_idx, area in enumerate(web_areas):
+            if not isinstance(area, dict):
+                raise ValueError(f'areas[{area_idx}] 必须是对象')
+
+            name = area.get('name')
+            if name is not None and not isinstance(name, str):
+                raise ValueError(f'areas[{area_idx}].name 必须是字符串')
+
+            points = area.get('points')
+            if not isinstance(points, list) or len(points) < 3:
+                raise ValueError(
+                    f'areas[{area_idx}].points 必须是至少 3 个点的数组')
+
+            for point_idx, point in enumerate(points):
+                if not isinstance(point, dict):
+                    raise ValueError(
+                        f'areas[{area_idx}].points[{point_idx}] 必须是对象')
+                for axis in ('x', 'y'):
+                    value = point.get(axis)
+                    if (isinstance(value, bool)
+                            or not isinstance(value, (int, float))
+                            or not math.isfinite(value)):
+                        raise ValueError(
+                            f'areas[{area_idx}].points[{point_idx}].{axis} '
+                            '必须是有限数字')
+
+            local_points = [
+                self._gps_to_local(point['y'], point['x'])
+                for point in points
+            ]
+            try:
+                polygon = Polygon(local_points)
+            except Exception as e:
+                raise ValueError(
+                    f'areas[{area_idx}] 多边形无法构造: {e}') from e
+            if not polygon.is_valid or polygon.area < 0.01:
+                raise ValueError(
+                    f'areas[{area_idx}] 多边形无效或面积太小')
+
+        return web_areas
+
     def web_areas_callback(self, msg: StringMsg):
         """接收 Web 前端发来的区域数据（JSON），用 Shapely 匹配障碍物归属"""
         import json
@@ -143,20 +195,17 @@ class MultiAreaDefiner(Node):
             self.get_logger().error(f'Web 区域 JSON 解析失败: {e}')
             return
 
-        action = data.get('action', '')
-        if action != 'set_areas':
-            self.get_logger().warn(f'未知 action: {action}')
+        try:
+            web_areas = self._validate_web_payload(data)
+        except ValueError as e:
+            self.get_logger().error(f'Web 区域数据校验失败: {e}')
             return
 
-        web_areas = data.get('areas', [])
         self.get_logger().info(f'📩 Web 收到 {len(web_areas)} 个条目')
-        if not web_areas:
-            self.get_logger().warn('Web 区域数据为空')
-            return
 
-        # ★ 全新方案：清空所有现有区域，用 Shapely 做障碍物归属判断
-        self.areas.clear()
-        self.next_color_idx = 0
+        # ★ 全新方案：先在局部变量中构建整批区域，成功后一次性替换旧任务。
+        next_areas = {}
+        next_color_idx = 0
 
         # 第一遍：将 GPS 坐标全部转为本地坐标，分离区域和障碍物
         parsed_areas = []     # { name, local_pts, poly, color }
@@ -190,8 +239,8 @@ class MultiAreaDefiner(Node):
                 parsed_obstacles.append({'name': name, 'local_pts': local_pts, 'poly': poly})
                 self.get_logger().info(f'  ⛔ 障碍物 [{name}]: {len(local_pts)} 点, 面积 {poly.area:.1f} m²')
             else:
-                color = self.color_cycle[self.next_color_idx % len(self.color_cycle)]
-                self.next_color_idx += 1
+                color = self.color_cycle[next_color_idx % len(self.color_cycle)]
+                next_color_idx += 1
                 parsed_areas.append({'name': name, 'local_pts': local_pts, 'poly': poly, 'color': color})
                 self.get_logger().info(f'  🟢 区域 [{name}]: {len(local_pts)} 点, 面积 {poly.area:.1f} m²')
 
@@ -221,7 +270,7 @@ class MultiAreaDefiner(Node):
                 'cutting_angle': 0.0,
                 'max_speed': 1.0,
             }
-            self.areas[area_item['name']] = area_entry
+            next_areas[area_item['name']] = area_entry
             inner_count = len(matching_rings)
             if inner_count:
                 self.get_logger().info(f'  → 区域 [{area_item["name"]}]: 含 {inner_count} 个内岛障碍物')
@@ -237,8 +286,15 @@ class MultiAreaDefiner(Node):
                     'cutting_angle': 0.0,
                     'max_speed': 0.0,
                 }
-                self.areas[obs_item['name']] = obs_entry
+                next_areas[obs_item['name']] = obs_entry
                 self.get_logger().info(f'  → 独立障碍物区域 [{obs_item["name"]}]（未归属任何割草区域）')
+
+        if not next_areas:
+            self.get_logger().error('Web 区域数据校验失败: 没有有效的区域条目')
+            return
+
+        self.areas = next_areas
+        self.next_color_idx = next_color_idx
 
         self.get_logger().info(f'[Web] 完成: {len(parsed_areas)} 个区域, '
                                f'{len(parsed_obstacles)} 个障碍物 '

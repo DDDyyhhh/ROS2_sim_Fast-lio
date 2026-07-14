@@ -5,8 +5,7 @@ hill_ekf.launch.py — 斜坡场景 RTK+LiDAR 融合定位
 启动内容:
   1. navsat_transform_node: /gps/fix (经纬度) → /odom/gps (UTM坐标)
   2. ekf_node: 融合 FAST-LIO (/Odometry) + IMU + GPS → /odometry/filtered
-  3. 静态 TF: camera_init → odom（FAST-LIO 坐标系对齐）
-  4. 静态 TF: map → odom（地图坐标系对齐）
+  3. 静态 TF: odom → camera_init（FAST-LIO 坐标系对齐）
 
 依赖:
   - ros-humble-robot-localization
@@ -27,7 +26,9 @@ def generate_launch_description():
 
     # ============ ekf_node 参数 ============
     ekf_params = {
-        "frequency": 30.0,
+        # FAST-LIO publishes at 20 Hz; matching it avoids an impossible
+        # 30 Hz EKF loop under the full Web + Scan profile.
+        "frequency": 20.0,
         "sensor_timeout": 0.1,
         "two_d_mode": False,              # ❗斜坡 → 3D 模式
         "publish_acceleration": False,
@@ -74,39 +75,30 @@ def generate_launch_description():
         "publish_filtered_gps": True,
         "use_odometry_yaw": False,
         "wait_for_datum": True,
+        # 仿真 GPS 的固定传感器原点；否则 navsat 会退回 (0, 0, 0)，
+        # 把经纬度转换出的百万米级坐标直接送入本地 odom EKF。
+        "datum": [22.5431, 114.0579, 0.0],
     }
 
     return LaunchDescription([
         DeclareLaunchArgument("use_sim_time", default_value="true"),
 
         # =============================================================
-        # 1. FAST-LIO 坐标系对齐: camera_init → odom
+        # 1. FAST-LIO 坐标系对齐: odom → camera_init
         #    FAST-LIO 使用 camera_init 作为世界坐标系，
         #    EKF 使用 odom 作为世界坐标系，需要静态 TF 转换
         # =============================================================
         Node(
             package="tf2_ros",
             executable="static_transform_publisher",
-            name="camera_init_to_odom",
+            name="odom_to_camera_init",
             arguments=["0", "0", "0", "0", "0", "0",
-                       "camera_init", "odom"],
+                       "odom", "camera_init"],
             parameters=[{"use_sim_time": use_sim_time}],
         ),
 
         # =============================================================
-        # 2. map → odom 静态 TF（EKF 输出的 world_frame 是 odom）
-        # =============================================================
-        Node(
-            package="tf2_ros",
-            executable="static_transform_publisher",
-            name="map_to_odom_static",
-            arguments=["0", "0", "0", "0", "0", "0",
-                       "map", "odom"],
-            parameters=[{"use_sim_time": use_sim_time}],
-        ),
-
-        # =============================================================
-        # 3. navsat_transform_node: GPS 经纬度 → UTM 里程计
+        # 2. navsat_transform_node: GPS 经纬度 → UTM 里程计
         #    订阅 /gps/fix → 发布 /odom/gps
         # =============================================================
         Node(
@@ -123,7 +115,7 @@ def generate_launch_description():
         ),
 
         # =============================================================
-        # 4. ekf_node: 融合里程计 → 最优位姿
+        # 3. ekf_node: 融合里程计 → 最优位姿
         #    订阅 /Odometry (FAST-LIO) + /imu/data + /odom/gps
         #    发布 /odometry/filtered
         #    ★ ROS2 Humble 中可执行文件名是 ekf_node（不是 ekf_localization_node）

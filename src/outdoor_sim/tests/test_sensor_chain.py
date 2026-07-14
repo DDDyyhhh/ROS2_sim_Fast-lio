@@ -48,6 +48,40 @@ class SensorChainContractTest(unittest.TestCase):
         self.assertIn('(\"/odometry/gps\", \"/odom/gps\")', launch)
         self.assertIn('"transform_timeout": 0.2', launch)
 
+    def test_full_profile_has_one_dynamic_odom_body_owner(self):
+        sim_launch = read("src/outdoor_sim/launch/hill_sim_launch.py")
+        full_launch = read("src/outdoor_sim/launch/hill_full.launch.py")
+
+        self.assertIn(
+            '"with_odom_to_tf", default_value="true"',
+            sim_launch,
+        )
+        self.assertIn("condition=IfCondition(with_odom_to_tf)", sim_launch)
+        self.assertIn(
+            '"with_odom_to_tf", default_value="false"',
+            full_launch,
+        )
+        self.assertIn("\"with_odom_to_tf\": with_odom_to_tf", full_launch)
+
+    def test_ekf_profile_has_one_static_map_odom_owner_and_tree_direction(self):
+        ekf_launch = read("src/outdoor_sim/launch/hill_ekf.launch.py")
+
+        self.assertNotIn('name="map_to_odom_static"', ekf_launch)
+        self.assertIn(
+            '"odom", "camera_init"]',
+            ekf_launch,
+        )
+
+    def test_simulation_gps_uses_local_datum(self):
+        launch = read("src/outdoor_sim/launch/hill_ekf.launch.py")
+
+        self.assertIn('"datum": [22.5431, 114.0579, 0.0]', launch)
+
+    def test_simulation_ekf_rate_matches_fast_lio_input_rate(self):
+        launch = read("src/outdoor_sim/launch/hill_ekf.launch.py")
+
+        self.assertIn('"frequency": 20.0', launch)
+
     def test_fast_lio_handles_pointcloud_without_time_field(self):
         source = read("src/fast_lio/src/preprocess.cpp")
 

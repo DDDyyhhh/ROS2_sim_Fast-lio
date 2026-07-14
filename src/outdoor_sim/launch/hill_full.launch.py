@@ -43,6 +43,7 @@ def generate_launch_description():
     with_ekf = LaunchConfiguration('with_ekf', default='true')
     with_lidar_scan = LaunchConfiguration('with_lidar_scan', default='true')
     with_rosbridge = LaunchConfiguration('with_rosbridge', default='true')
+    with_odom_to_tf = LaunchConfiguration('with_odom_to_tf', default='false')
 
     return LaunchDescription([
         # ==============================================================
@@ -57,6 +58,10 @@ def generate_launch_description():
                               description='启动 LiDAR→/scan 转换'),
         DeclareLaunchArgument('with_rosbridge', default_value='true',
                               description='启动 Web 前端桥接'),
+        DeclareLaunchArgument(
+            "with_odom_to_tf", default_value="false",
+            description="EKF 已发布 odom→body；仅关闭 EKF 时再启用 /odom TF 中继",
+        ),
 
         # ==============================================================
         # 1. 斜坡仿真 + 传感器桥接
@@ -65,6 +70,9 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(
                 os.path.join(pkg_outdoor, 'launch', 'hill_sim_launch.py'),
             ),
+            launch_arguments={
+                "with_odom_to_tf": with_odom_to_tf,
+            }.items(),
         ),
 
         # ==============================================================

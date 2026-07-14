@@ -15,6 +15,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
@@ -38,6 +39,7 @@ def generate_launch_description():
     # ------------------------------------------------------------------
     use_sim_time = LaunchConfiguration("use_sim_time", default="true")
     world_path = LaunchConfiguration("world", default=world_file)
+    with_odom_to_tf = LaunchConfiguration("with_odom_to_tf", default="true")
 
     declare_use_sim_time = DeclareLaunchArgument(
         "use_sim_time",
@@ -48,6 +50,10 @@ def generate_launch_description():
         "world",
         default_value=world_file,
         description="Full path to the .world file to load",
+    )
+    declare_with_odom_to_tf = DeclareLaunchArgument(
+        "with_odom_to_tf", default_value="true",
+        description="转发 /odom 为 TF；EKF profile 应关闭以避免重复 odom→body",
     )
 
     # ------------------------------------------------------------------
@@ -152,6 +158,7 @@ def generate_launch_description():
         name="odom_to_tf",
         output="screen",
         parameters=[{"use_sim_time": True}],
+        condition=IfCondition(with_odom_to_tf),
     )
 
     # ------------------------------------------------------------------
@@ -168,6 +175,7 @@ def generate_launch_description():
     return LaunchDescription([
         declare_use_sim_time,
         declare_world,
+        declare_with_odom_to_tf,
         gz_sim,
         robot_state_pub,
         create_entity,
