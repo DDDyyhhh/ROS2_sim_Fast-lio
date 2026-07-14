@@ -67,16 +67,20 @@
 - Most likely revisit: 仿真高负载下 EKF 30 Hz 更新率与 FAST-LIO 长时间有效点质量。
 - Edge cases found: 17（新增扫描线端点浮点内缩导致后处理卡死、全局 transit 失败吞掉后续区域路径、seam 起点贴边导致安全余量拒绝向外连接，以及 seam 失败后继续拼接的未验证线段）。
 - Verification status: 本专项当前验证全绿：8 项障碍物路径回归、5 项旧规划器回归、14 项 `colcon test`、三包构建、语法检查、diff 检查和 Web socket 回归均通过；仅保留交接中已知的性能/传感器后续问题。
-- Next session should read first: 本文件的 Questions for review 与 Active Handoff；路径 seam 专项已完成，后续若继续应先决定是否开启传感器性能或 Web payload 安全专项。
+- Next session should read first: 本文件的 Questions for review 与 Active Handoff；路径 seam 专项已完成，下一窗口从 RViz/TF 根因诊断开始。
 
 ## Active Handoff（当前交接进度）
 
-- 当前进度：已完成“双区域各有障碍物时区域 2 覆盖丢失”的 seam 修复；区域内路径保留，区域间连接单独执行全局绕障，针对性回归已通过，等待完整验证。
-- 当前提交：`HEAD`（`Preserve multi-area coverage during obstacle transit`）；当前分支为 `fix/web-launch-obstacle-planning`。
+- 当前进度：路径 seam 专项已完成并提交；下一阶段聚焦传感器运行稳定性、RViz TF 闪烁和 Web 输入契约安全。
+- 当前提交：`HEAD`（最新 Handoff 提交；规划器实现提交为 `262e16c`）；当前分支为 `fix/web-launch-obstacle-planning`。
 - 验证状态：上一轮全量构建、5 项传感器契约用例、6 项障碍物路径回归、12 项包测试和 Web 回归均通过；本轮 8 项障碍物路径回归、14 项 `colcon test`、三包构建和 Web 回归均通过。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
 - 工具清理：确认项目内 `.agents/skills` 与全局 skills 完全一致后，已删除 `.agents/`、`.superpowers/`、`docs/superpowers/plans/` 和 `skills-lock.json`。
 - 已知问题：清洁运行仍有少量 EKF “Failed to meet update rate” 性能提示；长时间高负载运行曾出现 FAST-LIO `No Effective Points`；`sensor_full` 的 RViz2 车体闪烁与四轮 `No transform` 尚未修复；非法 Web points 格式仍可能导致定义节点退出。
 - 本次实现：完成两阶段区域规划；先收集全部膨胀障碍物，再只对相邻区域首尾连接调用绕障；增加下方绕行候选、远离障碍物的贴边首段判定和 seam fail-closed 检查。测试文件未再扩展。
-- 下一步行动：本专项验证与 review 已完成；提交当前规划器、回归测试和实施笔记改动。`sensor_full` 专项顺延。
+- 下一步行动（新窗口直接执行）：
+  1. **RViz/TF 根因诊断**：在 `sensor_full` 中确认唯一 `odom → body` TF 发布者，检查 EKF 是否继续发散，并验证 `/joint_states` 是否包含四个轮关节；验收为车体与四轮 TF 稳定、无重复 `odom → body` 发布。
+  2. **传感器性能专项**：在 TF 稳定后重新采集 EKF 更新率和 FAST-LIO `No Effective Points` 基线，再决定最小参数或代码修复；不要在 TF 冲突未解决时直接调性能参数。
+  3. **非法 Web payload 加固**：对 `points` 做原子格式校验，非法输入返回明确错误且节点不退出，并补充回归测试。
+  4. **最终验收**：重跑 `sensor_full` 运行检查、相关包测试和 Web 回归；每个问题单独记录根因、修改和验证证据。路径 seam 专项保持不变。
 - 当前会话进度：代码审查发现的 seam 失败分支已修正，完整验证全绿；当前提交为 `HEAD`，规划器、回归测试和实施笔记已提交。
