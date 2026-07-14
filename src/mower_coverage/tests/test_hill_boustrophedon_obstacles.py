@@ -234,6 +234,112 @@ def test_global_detour_avoids_all_separated_obstacles():
     assert not path_crosses_obstacle(sampled, combined), sampled
 
 
+def test_angled_obstacle_does_not_delete_area_two_coverage():
+    """斜四边形障碍物不能让后处理删除区域后半段覆盖路径。"""
+    planner = object.__new__(HillBoustrophedon)
+    planner.inner_inflate = 0.3
+    planner.swath_spacing = 0.45
+    planner.spacing = 0.3
+    planner.transit_speed = 0.5
+    planner.get_logger = lambda: type('Logger', (), {
+        'info': lambda self, *args, **kwargs: None,
+        'warn': lambda self, *args, **kwargs: None,
+    })()
+
+    # 来自 Web 复现的区域 2 几何：当前后处理会在障碍物下边界卡住，
+    # 只留下 y≈10m 以下的少量路径，而 y≈20m 以上区域完全没有覆盖。
+    area = Polygon([
+        (-13.714977842826407, 23.85120281683264),
+        (-15.231542502868553, 7.432372433621168),
+        (9.998578666292058, 9.48472719863723),
+        (9.3092310923502, 26.177202358157103),
+        (-12.336282696403769, 23.85120281683264),
+    ])
+    obstacle = [
+        (-6.821502112174298, 17.936834187142523),
+        (1.8642773057589763, 19.85481215042057),
+        (-4.4777203631097064, 9.990922907985933),
+        (-10.681848522742113, 11.360907906788),
+    ]
+
+    path = planner.plan_area(area, [obstacle], 0.0, 1.0)
+    inflated_obstacle = Polygon(obstacle).buffer(0.3)
+
+    assert len(path) > 1000, f'区域覆盖路径过少: {len(path)}'
+    assert max(point[1] for point in path) > 20.0, path[-20:]
+    assert not path_has_points_inside(path, inflated_obstacle)
+    assert not path_crosses_obstacle(path, inflated_obstacle)
+
+
+def test_two_areas_keep_second_area_coverage_with_obstacles():
+    """两个各自带障碍物的区域不能因全局后处理丢掉第二个区域。"""
+    planner = object.__new__(HillBoustrophedon)
+    planner.inner_inflate = 0.3
+    planner.swath_spacing = 0.45
+    planner.spacing = 0.3
+    planner.transit_speed = 0.5
+    planner.last_waypoints = []
+    planner.last_obstacles = []
+    planner.publish_path = lambda waypoints: None
+    planner.get_logger = lambda: type('Logger', (), {
+        'info': lambda self, *args, **kwargs: None,
+        'warn': lambda self, *args, **kwargs: None,
+    })()
+
+    areas = {
+        '区域 1': {
+            'points': [
+                (17.581401969424945, 13.452612292496156),
+                (16.478445851702404, -6.249999714315564),
+                (41.43282798631861, -8.028708992990943),
+                (40.88134993330165, 10.989787183188184),
+            ],
+            'inner_rings': [[
+                (22.82044352057109, 5.653664748198537),
+                (22.131095945168152, -2.282110526382226),
+                (31.092614396184757, -2.692581773530449),
+                (27.094398471997433, 6.885077785108962),
+            ]],
+            'cutting_angle': 0.0,
+            'max_speed': 1.0,
+        },
+        '区域 2': {
+            'points': [
+                (-13.714977842826407, 23.85120281683264),
+                (-15.231542502868553, 7.432372433621168),
+                (9.998578666292058, 9.48472719863723),
+                (9.3092310923502, 26.177202358157103),
+                (-12.336282696403769, 23.85120281683264),
+            ],
+            'inner_rings': [[
+                (-6.821502112174298, 17.936834187142523),
+                (1.8642773057589763, 19.85481215042057),
+                (-4.4777203631097064, 9.9909229071097064),
+                (-10.681848522742113, 11.360907906788),
+            ]],
+            'cutting_angle': 0.0,
+            'max_speed': 1.0,
+        },
+    }
+
+    path = planner.plan_from_areas(areas)
+    area_two = Polygon(areas['区域 2']['points'])
+    obstacles = [
+        Polygon(ring).buffer(0.3)
+        for area in areas.values()
+        for ring in area['inner_rings']
+    ]
+    combined = unary_union(obstacles)
+    area_two_points = [point for point in path
+                       if area_two.buffer(0.001).covers(Point(point[:2]))]
+
+    assert len(area_two_points) > 1000, (
+        f'区域 2 覆盖路径过少: {len(area_two_points)} / {len(path)}')
+    assert max(point[1] for point in area_two_points) > 20.0
+    assert not path_has_points_inside(path, combined)
+    assert not path_crosses_obstacle(path, combined)
+
+
 def test_one_area_two_obstacles_no_path_inside():
     """一个区域内有两个障碍物时，路径不能因为用全局合并框绕障而进入另一个障碍物。"""
     planner = object.__new__(HillBoustrophedon)
@@ -272,5 +378,7 @@ if __name__ == "__main__":
     test_multiple_areas_create_transit_without_crashing()
     test_multi_area_transit_avoids_next_area_obstacle()
     test_global_detour_avoids_all_separated_obstacles()
+    test_angled_obstacle_does_not_delete_area_two_coverage()
+    test_two_areas_keep_second_area_coverage_with_obstacles()
     test_one_area_two_obstacles_no_path_inside()
     print("✅ hill_boustrophedon 障碍物回归测试通过")

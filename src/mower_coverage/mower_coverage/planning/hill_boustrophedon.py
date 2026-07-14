@@ -152,7 +152,10 @@ class HillBoustrophedon(Node):
         obs_bounds = None  # 障碍物合并 bounding box，用于绕障过渡
         if obstacles:
             combined = unary_union(obstacles)
-            work_area = area_polygon.difference(combined)
+            # difference/intersection 的浮点误差可能让扫描线端点落入
+            # 障碍物约几个纳米；预留极小几何余量，避免后处理把整段
+            # 后续覆盖误判为障碍物内部。
+            work_area = area_polygon.difference(combined.buffer(1e-4))
             obs_bounds = combined.bounds  # (min_x, min_y, max_x, max_y)
 
         if work_area.is_empty:
@@ -290,7 +293,9 @@ class HillBoustrophedon(Node):
         fix_count = 0
 
         def point_inside_obstacle(pt):
-            return combined.covers(ShapelyPoint(pt[0], pt[1]))
+            # work_area.difference() 产生的扫描线端点可能正好落在膨胀
+            # 障碍物边界上；边界点不是内部点，不能因此丢掉后续整段覆盖。
+            return combined.contains(ShapelyPoint(pt[0], pt[1]))
 
         def segment_hits_obstacle(a, b):
             """检测线段是否穿越或过于接近障碍物"""
@@ -298,11 +303,16 @@ class HillBoustrophedon(Node):
             # 标准穿越检测
             if line.crosses(combined) or line.within(combined) or combined.contains(line):
                 return True
-            # 浮点精度保护：如果线段距离障碍物 < 0.05m，视为穿越
-            # （work_area.difference() 边界处可能有微小重叠）
+            # 浮点精度保护：如果线段距离障碍物 < 0.05m，且不是仅在
+            # 边界端点接触，视为穿越。扫描线端点贴边是 difference()
+            # 的正常结果，不能把它当作整条线段不安全。
             safety_margin = 0.05
-            if combined.distance(line) < safety_margin:
-                return True
+            if combined.distance(line) < safety_margin and not line.touches(combined):
+                # 路径点可能因几何内缩只在障碍物外约几个微米；若该段
+                # 从障碍物边界向外离开，不应因安全余量把它判成不可连接。
+                start_distance = combined.distance(ShapelyPoint(a[:2]))
+                end_distance = combined.distance(ShapelyPoint(b[:2]))
+                return end_distance <= start_distance + 1e-9
             return False
 
         def get_blocking_obstacles(a, b):
@@ -373,19 +383,36 @@ class HillBoustrophedon(Node):
                 prev_side_x = safe_side_x(px)
                 curr_side_x = safe_side_x(cx)
 
-                candidates = [
-                    (prev_side_x, py, self.transit_speed),
-                    (prev_side_x, clear_y, self.transit_speed),
-                    (curr_side_x, clear_y, self.transit_speed),
-                    (curr_side_x, cy, self.transit_speed),
-                    curr,
+                candidate_routes = [
+                    [
+                        (prev_side_x, py, self.transit_speed),
+                        (prev_side_x, clear_y, self.transit_speed),
+                        (curr_side_x, clear_y, self.transit_speed),
+                        (curr_side_x, cy, self.transit_speed),
+                        curr,
+                    ],
+                    [
+                        # 起点可能贴着障碍物下边界，先向下离开再横向
+                        # 绕行；否则第一条“先横移”的候选会立即穿障。
+                        (px, obs_min_y - vertical_clearance, self.transit_speed),
+                        (prev_side_x, obs_min_y - vertical_clearance, self.transit_speed),
+                        (curr_side_x, obs_min_y - vertical_clearance, self.transit_speed),
+                        (curr_side_x, cy, self.transit_speed),
+                        curr,
+                    ],
                 ]
 
                 # 候选点和新增线段必须一起验证；只验证点会让绕过当前
                 # 障碍物的竖直/水平段穿过另一个分离障碍物。
-                if candidate_route_is_safe(candidates):
-                    for pt in candidates:
-                        append_point(fixed, pt)
+                route_added = False
+                for candidates in candidate_routes:
+                    if candidate_route_is_safe(candidates):
+                        for pt in candidates:
+                            append_point(fixed, pt)
+                        route_added = True
+                        break
+
+                if route_added:
                     break
 
                 # 候选点或候选线段不安全，增大安全距离再试
@@ -497,11 +524,11 @@ class HillBoustrophedon(Node):
         Returns:
             [(x, y, speed), ...] 完整路径点列表
         """
-        all_waypoints = []
+        planned_areas = []
         all_obstacles = []
         area_names = list(areas_dict.keys())
 
-        for idx, name in enumerate(area_names):
+        for name in area_names:
             area_info = areas_dict[name]
             pts = area_info.get('points', [])
             if len(pts) < 3:
@@ -522,32 +549,51 @@ class HillBoustrophedon(Node):
 
             self.get_logger().info(f'  规划区域 [{name}]: {len(inner_rings)} 个内岛, max_speed={max_speed}')
 
-            # 规划该区域
-            wp = self.plan_area(poly, inner_rings, angle, max_speed)
-            self.get_logger().info(f'  区域 [{name}]: {len(wp)} 个路径点')
-            all_waypoints.extend(wp)
-
             for ring in inner_rings:
                 inner_poly = Polygon(ring)
                 if inner_poly.is_valid and inner_poly.area > 0.01:
                     all_obstacles.append(inner_poly.buffer(self.inner_inflate))
 
-            # 区域间导航
-            if idx < len(area_names) - 1 and wp:
-                next_name = area_names[idx + 1]
-                next_area = areas_dict[next_name]
-                next_pts = next_area.get('points', [])
-                if len(next_pts) >= 3:
-                    next_poly = Polygon(next_pts)
-                    transit = self.plan_transit(wp[-1], next_poly)
-                    all_waypoints.extend(transit)
-                    self.get_logger().info(f'  区域 [{name}] → [{next_name}]: 导航路径')
+            # 先完成所有区域规划。这样后续区域间连接可以看到全局障碍物，
+            # 同时不会把尚未处理的区域覆盖路径混进同一次绕障状态机。
+            wp = self.plan_area(poly, inner_rings, angle, max_speed)
+            self.get_logger().info(f'  区域 [{name}]: {len(wp)} 个路径点')
+            planned_areas.append((name, wp))
 
-        # 区域内路径已分别绕障，但区域间 transit 可能穿过任一区域的障碍物；
-        # 完整路径拼接后统一复查，确保发布给执行器和前端的全局路径都安全。
+        all_waypoints = []
+        previous_wp = None
+        previous_name = None
+        connection_count = 0
+        for name, wp in planned_areas:
+            if not wp:
+                continue
+
+            if previous_wp is None:
+                all_waypoints.extend(wp)
+            else:
+                # 只修复区域间 seam。区域内路径已经由 plan_area() 使用
+                # 本区域障碍物处理过，不能再对完整路径做流式后处理。
+                connection = self._fix_obstacle_crossings(
+                    [previous_wp[-1], wp[0]],
+                    all_obstacles,
+                    self.transit_speed)
+                if connection[-1][:2] != wp[0][:2]:
+                    message = f'区域 [{previous_name}] → [{name}] 无法生成安全导航路径'
+                    self.get_logger().error(message)
+                    raise RuntimeError(message)
+                all_waypoints.extend(connection[1:])
+                all_waypoints.extend(wp[1:])
+                connection_count += 1
+                self.get_logger().info(
+                    f'  区域 [{previous_name}] → [{name}]: 导航路径')
+
+            previous_wp = wp
+            previous_name = name
+
+        # 区域内路径与各个 seam 已分别绕障，完整路径无需再次统一流式处理。
         if all_obstacles and all_waypoints:
-            all_waypoints = self._fix_obstacle_crossings(
-                all_waypoints, all_obstacles, self.transit_speed)
+            self.get_logger().info(
+                f'  已对 {connection_count} 个区域间连接执行全局绕障检查')
 
         self.last_waypoints = all_waypoints
         self.last_obstacles = all_obstacles
