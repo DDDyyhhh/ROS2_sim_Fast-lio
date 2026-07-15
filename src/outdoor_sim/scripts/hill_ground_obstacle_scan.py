@@ -253,7 +253,7 @@ class HillGroundObstacleScan:
                         ground_clearance=self._ground_clearance,
                         min_ground_points=self._min_ground_points,
                     )
-                except (RuntimeError, TypeError, ValueError) as exc:
+                except (AssertionError, RuntimeError, TypeError, ValueError) as exc:
                     self.get_logger().warning(
                         f"点云转换失败，发布停车扫描: {exc}")
                     self._publish_scan(msg.header, np.empty((0, 3)), emergency=True)
