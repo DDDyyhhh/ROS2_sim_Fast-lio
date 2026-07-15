@@ -27,7 +27,11 @@ class SensorChainContractTest(unittest.TestCase):
     def test_hill_scan_keeps_low_obstacle_detection_contract(self):
         launch = read("src/outdoor_sim/launch/hill_nav2_local.launch.py")
 
-        self.assertIn('"ground_clearance": 0.15', launch)
+        self.assertIn('"ground_clearance": 0.03', launch)
+        self.assertIn('"min_ground_fit_points": 64', launch)
+        self.assertIn('"min_ground_cells": 32', launch)
+        self.assertIn('"ground_support_radius": 1.0', launch)
+        self.assertIn('"min_ground_cell_span": 0.02', launch)
         self.assertIn('"range_min": 0.2', launch)
 
     def test_safe_executor_uses_sensor_data_qos_for_scan(self):
@@ -41,6 +45,12 @@ class SensorChainContractTest(unittest.TestCase):
             source,
             r"LaserScan,\s*'/scan',\s*self\.scan_callback,\s*"
             r"qos_profile_sensor_data",
+        )
+        self.assertIn("('scan_timeout', 0.5)", source)
+        self.assertIn('def _scan_is_fresh(self):', source)
+        self.assertIn(
+            "self.execution_mode == 'safe' and not self._scan_is_fresh()",
+            source,
         )
 
     def test_localization_uses_existing_body_frame(self):

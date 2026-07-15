@@ -31,9 +31,11 @@ def _cell_levels(points: np.ndarray, cell_size: float):
     counts = (ends - starts).astype(np.int32)
     quartile_offsets = ((counts - 1) * 0.25).astype(np.int32)
     levels = sorted_z[starts + quartile_offsets]
+    spreads = sorted_z[ends - 1] - sorted_z[starts]
 
     centres = (unique_cells.astype(np.float64) + 0.5) * cell_size
-    return centres, levels, counts, unique_cells
+    representatives = points[order[starts + quartile_offsets], :2]
+    return centres, levels, counts, unique_cells, representatives, spreads
 
 
 def _fit_ground_plane(cell_centres: np.ndarray, levels: np.ndarray):
@@ -69,6 +71,50 @@ def _fit_ground_plane(cell_centres: np.ndarray, levels: np.ndarray):
     return coefficients
 
 
+def _cell_key_layout(cell_coords: np.ndarray, radius_cells: int):
+    """Return a collision-free integer layout for neighbouring cell lookup."""
+    origin = cell_coords.min(axis=0)
+    span_y = int(cell_coords[:, 1].max() - origin[1] + 1)
+    stride = span_y + 2 * radius_cells + 1
+    return origin, stride
+
+
+def _cell_keys(
+    cell_coords: np.ndarray,
+    origin: np.ndarray,
+    stride: int,
+    radius_cells: int,
+):
+    """Encode integer cell coordinates without allocating a dense grid."""
+    return (
+        (cell_coords[:, 0] - origin[0] + radius_cells) * stride
+        + cell_coords[:, 1] - origin[1] + radius_cells
+    )
+
+
+def _expand_ground_support(
+    cell_coords: np.ndarray,
+    seed_mask: np.ndarray,
+    origin: np.ndarray,
+    stride: int,
+    radius_cells: int,
+):
+    """Allow sparse returns near a supported cell to use the ground model."""
+    if not seed_mask.any():
+        return np.zeros(len(cell_coords), dtype=bool)
+
+    cell_keys = _cell_keys(cell_coords, origin, stride, radius_cells)
+    seed_keys = cell_keys[seed_mask]
+    supported = np.zeros(len(cell_coords), dtype=bool)
+    for dx in range(-radius_cells, radius_cells + 1):
+        for dy in range(-radius_cells, radius_cells + 1):
+            supported |= np.isin(
+                cell_keys,
+                seed_keys + dx * stride + dy,
+            )
+    return supported
+
+
 def extract_obstacle_points(
     points,
     *,
@@ -76,8 +122,12 @@ def extract_obstacle_points(
     max_range: float = 30.0,
     ground_fit_range: float = 8.0,
     ground_cell_size: float = 0.25,
-    ground_clearance: float = 0.15,
+    ground_clearance: float = 0.03,
     min_ground_points: int = 3,
+    min_ground_fit_points: int = 64,
+    min_ground_cells: int = 32,
+    ground_support_radius: float = 1.0,
+    min_ground_cell_span: float = 0.02,
 ):
     """
     Return points that are not explained by a locally supported ground.
@@ -96,32 +146,61 @@ def extract_obstacle_points(
     valid = np.isfinite(xyz).all(axis=1)
     in_range = valid & (ranges >= min_range) & (ranges <= max_range)
     fit_mask = in_range & (ranges <= ground_fit_range)
-    if fit_mask.sum() < min_ground_points:
+    if fit_mask.sum() < min_ground_fit_points:
         return xyz[in_range]
 
     fit_points = xyz[fit_mask]
-    cell_centres, levels, counts, _ = _cell_levels(
-        fit_points, ground_cell_size)
+    (
+        _, levels, counts, unique_cells, ground_xy, cell_spans
+    ) = _cell_levels(fit_points, ground_cell_size)
     supported = counts >= min_ground_points
-    if supported.sum() < 3:
+    supported &= cell_spans >= min_ground_cell_span
+    if (
+        len(unique_cells) < min_ground_cells
+        or supported.sum() < max(3, min_ground_cells // 2)
+    ):
+        return xyz[in_range]
+
+    supported_span = np.ptp(unique_cells[supported], axis=0)
+    if supported_span.min() * ground_cell_size < ground_support_radius:
         return xyz[in_range]
 
     plane = _fit_ground_plane(
-        cell_centres[supported], levels[supported])
+        ground_xy[supported], levels[supported])
     if plane is None:
         return xyz[in_range]
 
+    finite_cells = np.floor(
+        xyz[valid, :2] / ground_cell_size).astype(np.int32)
+    radius_cells = max(
+        0, int(math.ceil(ground_support_radius / ground_cell_size)))
+    origin, stride = _cell_key_layout(finite_cells, radius_cells)
+    unique_keys = _cell_keys(
+        unique_cells, origin, stride, radius_cells)
+    model_supported = _expand_ground_support(
+        unique_cells,
+        supported,
+        origin,
+        stride,
+        radius_cells,
+    )
+
     predicted = np.full(len(xyz), np.nan, dtype=np.float64)
-    finite = np.isfinite(xyz).all(axis=1)
-    predicted[finite] = (
-        plane[0] * xyz[finite, 0]
-        + plane[1] * xyz[finite, 1]
+    predicted[valid] = (
+        plane[0] * xyz[valid, 0]
+        + plane[1] * xyz[valid, 1]
         + plane[2]
     )
-    above_plane = xyz[:, 2] > predicted + ground_clearance
-    # A point is filtered only when a local plane explains it.  Unknown points
-    # remain obstacles (fail-safe); there is no absolute Z cutoff here.
-    obstacle = (~fit_mask) | above_plane
+    point_keys = np.zeros(len(xyz), dtype=np.int64)
+    point_keys[valid] = _cell_keys(
+        finite_cells, origin, stride, radius_cells)
+    locally_supported = np.zeros(len(xyz), dtype=bool)
+    locally_supported[valid] = np.isin(
+        point_keys[valid], unique_keys[model_supported])
+    near_ground = np.abs(xyz[:, 2] - predicted) <= ground_clearance
+    # Only points in a locally supported cell and inside the narrow ground
+    # band may be filtered.  Unsupported/ambiguous points remain obstacles.
+    obstacle = (~locally_supported) | (~near_ground)
     return xyz[in_range & obstacle]
 
 
@@ -187,8 +266,12 @@ class HillGroundObstacleScan:
                 self.declare_parameter("range_max", 30.0)
                 self.declare_parameter("ground_fit_range", 8.0)
                 self.declare_parameter("ground_cell_size", 0.25)
-                self.declare_parameter("ground_clearance", 0.15)
+                self.declare_parameter("ground_clearance", 0.03)
                 self.declare_parameter("min_ground_points", 3)
+                self.declare_parameter("min_ground_fit_points", 64)
+                self.declare_parameter("min_ground_cells", 32)
+                self.declare_parameter("ground_support_radius", 1.0)
+                self.declare_parameter("min_ground_cell_span", 0.02)
                 self.declare_parameter("self_filter_x", 0.25)
                 self.declare_parameter("self_filter_y", 0.20)
 
@@ -207,6 +290,14 @@ class HillGroundObstacleScan:
                     self.get_parameter("ground_clearance").value)
                 self._min_ground_points = int(
                     self.get_parameter("min_ground_points").value)
+                self._min_ground_fit_points = int(
+                    self.get_parameter("min_ground_fit_points").value)
+                self._min_ground_cells = int(
+                    self.get_parameter("min_ground_cells").value)
+                self._ground_support_radius = float(
+                    self.get_parameter("ground_support_radius").value)
+                self._min_ground_cell_span = float(
+                    self.get_parameter("min_ground_cell_span").value)
                 self._self_filter_x = float(
                     self.get_parameter("self_filter_x").value)
                 self._self_filter_y = float(
@@ -252,11 +343,18 @@ class HillGroundObstacleScan:
                         ground_cell_size=self._ground_cell_size,
                         ground_clearance=self._ground_clearance,
                         min_ground_points=self._min_ground_points,
+                        min_ground_fit_points=self._min_ground_fit_points,
+                        min_ground_cells=self._min_ground_cells,
+                        ground_support_radius=self._ground_support_radius,
+                        min_ground_cell_span=self._min_ground_cell_span,
                     )
-                except (AssertionError, RuntimeError, TypeError, ValueError) as exc:
+                except (
+                    AssertionError, RuntimeError, TypeError, ValueError
+                ) as exc:
                     self.get_logger().warning(
                         f"点云转换失败，发布停车扫描: {exc}")
-                    self._publish_scan(msg.header, np.empty((0, 3)), emergency=True)
+                    self._publish_scan(
+                        msg.header, np.empty((0, 3)), emergency=True)
                     return
 
                 self._publish_scan(msg.header, obstacles)

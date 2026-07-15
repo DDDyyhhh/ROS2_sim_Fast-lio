@@ -58,6 +58,13 @@
 - 仿真 PointCloud2 含 `x,y,z,intensity,ring` 混合 datatype；Humble 的 `read_points_numpy()` 会断言失败，改用结构化 `read_points()` 只读取 XYZ，保留输入字段兼容性。
 - 为满足 10 Hz 点云负载，将逐 cell `np.quantile()` 改为 NumPy 排序后按索引取下四分位；单帧基准约从 `0.265s` 降到 `0.039s`，没有引入 C++ 重构。
 - 为避免新的近场盲区，最终保留 `range_min=0.20m`；车体内部回波由 `self_filter_x/y` 矩形过滤，转换异常则发布 `range_min` 停车扫描。
+- 双轴审查发现当前地面模型的 fail-closed 边界不完整：只要全局平面存在，未被 `supported` 支持的 cell 仍可能被过滤；仅由分散低矮回波组成的平面也可能自举成“地面”。修复前不能宣称低矮障碍检测完备。
+- 审查还发现新节点的 `numpy`/`sensor_msgs_py` 运行依赖未登记，专项回归未注册到 `outdoor_sim` 的 CTest；补齐依赖与测试注册后再提交。
+- 复审进一步构造了 16 格×4 点、共 64 个、跨距约 1m 的共面 obstacle-only 回波；仅提高总点数仍会自举成地面。最终要求至少 32 个 occupied cells 且至少一半有多点 seed 支撑，并用每格真实低位回波拟合，避免把 cell 中心偏差误当成地形。
+- 为覆盖更大 adversarial 平面，ground seed 还必须在 cell 内有至少 `0.02m` 的 Z 展宽；均匀共面 obstacle-only 点即使占满 32 格也不会成为地面模型。该规则对过于稀疏/无垂向地面证据的帧选择安全停车，真实硬件仍需标定。
+- safe scan 复审还发现 `-Inf` 不能代表“无回波”（只有 `+Inf` 可以）；现已将 `-Inf` 与 NaN 一样判为无效并停车，回归覆盖 NaN、`+Inf` 和 `-Inf`。
+- 复审指出 0.08m 容差仍会漏掉 5cm 突起；将安全容差降至 0.03m，并加入 5cm 障碍回归。该阈值仍代表测量/拟合容差，不是绝对高度过滤。
+- 复审还发现执行器在 safe 模式启动、点云节点崩溃或 `/scan` 陈旧时默认继续跟踪路径；补充 0.5s scan freshness/validity 门禁，安全模式在首帧缺失、格式无效或超时期间只发布停车命令，direct 模式保持原行为。
 
 # Questions for review
 
@@ -70,7 +77,7 @@
 - 下一窗口需要 A/B 验证：关闭 FAST-LIO/EKF、关闭 `/scan` 或使用 direct 执行模式分别测试“控制器能否驶向首个目标点”；每次只改变一个开关并记录 `/cmd_vel`、`/odom`、`/scan` 和执行状态。
 - 本轮干净短跑没有复现用户的真实停滞；下一步必须用当前 Web/区域文件生成的真实首目标重跑 A/B，并同时记录路径首点、`frame_id`、原始 `/odom` 和 `/odometry/filtered`，否则不能选择修复执行器、规划器或定位契约。
 - 本轮 24–35 秒探针均未观察到 `/velodyne_points` header 回退；历史长跑的回退证据仍有效，但尚不足以证明它是本次干净人工路径停滞的原因。
-- 产品决策待确认：是优先保留低矮障碍安全检测并实现坡面/地面分割，还是接受仿真/坡面 profile 只检测高于约 1m 的障碍以恢复自动执行；两者会产生不同安全边界，不能默默选择。
+- 产品决策已明确：优先保留低矮障碍安全检测并实现坡面/地面分割，不接受将仿真/坡面 profile 的检测下限提高到约 1m。
 - 已决策：保守保留低矮障碍检测；仅过滤有局部地面证据且高度差在容差内的点，无法确认是地面的点 fail-closed 保留。
 - 当前实现使用 8 m 局部单平面估计；仿真回归和运行态已验证，真实硬件仍需用带低矮障碍的现场点云做标定/验收，不能将本次仿真证据等同于通用安全证明。
 - 路径专项的验收必须先证明完整全局路径（包括区域间 transit 和前端降采样后的 `/coverage/multi_path`）不与任一膨胀障碍物相交，再调整路径密度参数。
@@ -94,7 +101,7 @@
 - 本轮构建：`colcon build --symlink-install --packages-select fast_lio mower_coverage outdoor_sim` 成功。
 - 本轮新验证：单区域斜障碍回归先失败（415 点）后通过（epsilon 后 1974 点）；双区域真实回归先出现区域 2 为 0 点，完成 seam 修复后覆盖与全局安全断言均通过。
 - 本轮新验证：8 项障碍物路径回归、5 项旧规划器回归、Python 语法检查、`git diff --check`、三包构建和 Web 回归均通过；`colcon test` 最终为 14 tests / 0 errors / 0 failures。
-- 本轮审查：按用户 AGENTS 的 Standards 和本交接 spec 手工完成双轴 review；未发现阻断性 standards/spec finding。当前工具未提供该 skill 要求的并行 sub-agent，因此未伪造子代理报告。
+- 本轮审查：按用户 AGENTS 的 Standards 和本交接 spec 完成双轴 review；初审发现地面模型自举、低容差盲区和 safe scan fail-open，已在本轮增量修复并加入回归。后续复审需以当前工作树为准。
 - 本轮 RViz/TF 诊断：干净 `sensor_full` 运行中 `/tf` 有 `robot_state_publisher`、`laser_mapping`、`ekf_localization`、`odom_to_tf` 四个 publisher；frame-pair probe 观察到 `odom → body` 持续发布，停止 `odom_to_tf` 后 publisher 降为 3 个且该 pair 仍存在，确认 EKF 是保留 owner。`/joint_states` 同时包含四个轮关节。
 - 本轮 GPS 诊断：默认 navsat 日志为 Datum `(0,0,0)`，`/odom/gps` 约为 `(31368,2495923)`；通过 `/datum` 注入仿真 GPS 的 `22.5431,114.0579` 后，`/odom/gps` 回到约 `(0.04,0.18)`，直接验证原点错配。由于 EKF 已在坏状态运行，旧实例的 z 状态仍不可用于验收，需在代码修复后清洁重启验证。
 - 本轮修复验证：先新增 3 项 sensor-chain 红灯，再修改 `hill_sim_launch` 的中继开关、`hill_full` 的默认 owner、`hill_ekf` 的 datum/TF 拓扑并全部转绿；清洁运行中 `/tf` publisher=3、`/tf_static` publisher=4（含唯一 `map → odom`）、`/odom/gps≈(0.04,0.18,0)`、`/odometry/filtered≈(0.04,0.18,-0.54)`，四轮 frame pair 全部存在。
@@ -105,31 +112,38 @@
 - 交接尾项复验：独立 Web payload、传感器、障碍物、规划器和 `git diff --check` 全部通过；`mower_coverage` 首次沙箱运行 15/16 通过且唯一失败为 socket `PermissionError`，获准本地环境完整重跑为 16 tests / 0 errors / 0 failures。
 - 本轮诊断证据：历史完整运行日志出现用户给出的 `Failed to meet update rate! Took 0.945s`，并同时存在大量 LiDAR timestamp 回退/缓冲清空；静态检查确认 FAST-LIO 20Hz 仿真输入仍配置 `scan_rate: 10`、PointCloud2 无 per-point `time`，这些是下一窗口的单变量探针候选。
 - 本轮控制探针：不启动 ROS/Gazebo 的内存 harness 已验证 safe 避障状态会完全压制前进命令；无障碍状态同一控制循环会产生正向速度，说明控制器本身不是“永远不发布 cmd_vel”，需要优先检查真实 `/scan` 命中情况。
-- 本轮范围：只修改 hill profile 的点云→`/scan` seam、其安装/依赖、传感器契约测试和本交接记录；未改变硬件默认策略、执行器停车阈值或 FAST-LIO。
+- 本轮范围：修改 hill profile 的点云→`/scan` seam、其安装/依赖、传感器契约测试，并为 safe 执行器增加首帧/有效性/新鲜度停车门禁；未改变硬件默认策略、执行器障碍停车阈值或 FAST-LIO。
 - 本轮宿主机运行证据：最小 profile 与完整 profile 均用同一人工路径触发 `/multi_area/plan_and_start`；两者均有正向 `/cmd_vel` 和原始 `/odom` 位移，完整 profile 点云 stamp 无回退，未形成用户真实停滞的红灯。
 - 本轮真实路径静态证据：当前区域文件的第一个覆盖点在原点约 20.9m 外，规划器发布的是降采样 `/coverage/multi_path`；需要先对这条真实路径做运行态首目标验收。
 - 本轮真实路径运行证据：safe 红灯、direct 绿灯、启动高度窗口 A/B 均已在宿主机自动退出实例中完成；所有临时 checkpoint 写入 `/tmp`，源码未改，仅更新本文件。
 - 本轮安全修复红灯：`python3 src/outdoor_sim/tests/test_hill_ground_obstacle_scan.py` 在实现前以 `ModuleNotFoundError` 失败；下一步先让最小地面分割函数转绿，再接入 ROS 节点。
 - 本轮实现验证：4 项地面分割回归、10 项传感器契约、Python 语法检查和 `outdoor_sim` 构建通过；单实例 `/scan` 约 `12.6 Hz`，前方 ±30° 15 秒内无有效命中。
-- 本轮真实路径 safe 绿灯：同一 Web 区域规划 `28002` 点、执行器收到 `3852` 点；35 秒内 `/cmd_vel` 前进 `305`、倒车 `0`、停止 `16`，`/scan` 前方有效命中 `0`，原始 `/odom` 从约 `(-25.77,15.46)` 到 `(2.15,15.83)`。
-- 本轮 direct 对照绿灯：清洁单实例、同一路径、同一地面过滤器；35 秒内 `/cmd_vel` 前进 `314`、倒车 `0`、停止 `14`，原始 `/odom` 从约 `(-19.91,15.46)` 到 `(8.94,15.90)`。
+- 审查修复验证：精确复现的 24 个（8 格×3 点）和 64 个（16 格×4 点）`z=0.4m` 障碍回波全部保留；新增 5 cm 障碍、障碍-only 点云和无局部支撑点回归均通过；`outdoor_sim` CTest 已注册并通过 8 项专项测试。
+- 审查修复后的包验证：`colcon build --symlink-install --packages-select outdoor_sim` 成功，安装后可枚举 `hill_ground_obstacle_scan.py`；完整 `outdoor_sim` CTest 的新 pytest 通过，剩余 flake8/pep257/xmllint 为已有基线失败。
+- 审查修复后的性能基准：76,800 点合成帧地面分割中位耗时约 `0.071s`，输出 0 个平面地面障碍；仍需现场点云与真实 Web safe 长跑复验新阈值。
+- 获准本地环境重跑最终版本 `mower_coverage` 后 19/19 通过；沙箱内唯一的临时 socket `PermissionError` 已确认是环境限制，不是代码回归。
+- 新增 safe 执行器 freshness/scan validity 回归 3 项，和 Web payload 回归合计 5 项直接 pytest 通过；执行器只读复查未发现新的 Standards 违规。
+- 新参数真实短跑：无 FAST-LIO/EKF 的 hill profile 启动成功，真实 `/scan` 发布中位约 `18.9 Hz`（8 秒观测窗口），实例已自动退出且未留下重复进程；该证据只覆盖转换发布率，不等同于完整 Web safe A/B。
+- 真实坡面无障碍过滤探针（最终 32-cell/2cm-span 配置）：约 8 秒收到 161 帧，前方 ±30° 有效点 `0`、`<0.8m` 命中 `0`；实例正常清理。该证据覆盖地面误报，不覆盖真实障碍物回波。
+- 本轮审查前版本真实路径 safe 绿灯：同一 Web 区域规划 `28002` 点、执行器收到 `3852` 点；35 秒内 `/cmd_vel` 前进 `305`、倒车 `0`、停止 `16`，`/scan` 前方有效命中 `0`，原始 `/odom` 从约 `(-25.77,15.46)` 到 `(2.15,15.83)`；该证据不替代当前阈值/门禁版本复验。
+- 本轮审查前版本 direct 对照绿灯：清洁单实例、同一路径、同一地面过滤器；35 秒内 `/cmd_vel` 前进 `314`、倒车 `0`、停止 `14`，原始 `/odom` 从约 `(-19.91,15.46)` 到 `(8.94,15.90)`；规划器和 direct 链未改动。
 - 运行中曾发现两套同名 profile 残留导致 `/scan` 双发布；已清理并用单发布者重跑，最终证据未使用重复实例数据。
 
 # Summary
 
-- Deviations count: 20（本轮新增 hill 地面分割、混合字段解析、NumPy 性能路径、近场范围恢复和异常停车扫描）。
+- Deviations count: 16（含本轮 hill 地面分割、混合字段解析、NumPy 性能路径、近场范围恢复、异常停车扫描和审查修复）。
 - Most likely revisit: 8 m 单平面模型对真实硬件非平面地形的泛化；需要带低矮障碍的现场点云验收，不能仅凭仿真宣称安全完备。
-- Edge cases found: 34（新增混合 PointCloud2 datatype、量化性能、重复 profile、车体自滤波和转换异常 fail-safe）。
-- Verification status: 4 项地面分割回归、10 项传感器契约、mower_coverage 16 tests、单文件 lint/pep257、三包构建、单实例 scan 运行和真实区域 safe/direct A/B 通过；outdoor_sim 仍有既有 lint/xmllint 基线失败。
+- Edge cases found: 41（新增混合 PointCloud2 datatype、量化性能、重复 profile、车体自滤波、转换异常 fail-safe 和地面模型自举）。
+- Verification status: 8 项地面分割回归、10 项传感器契约、safe freshness/validity 3 项、outdoor_sim 构建/安装和专项 CTest 通过；mower_coverage 19 tests、既有障碍物/规划器回归仍通过，但本轮阈值变更后的真实 Web safe 长跑尚待复验；outdoor_sim 仍有既有 lint/xmllint 基线失败。
 - Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；优先做硬件点云回放/现场标定，或决定是否将同一过滤器推广到旧 Nav2 入口。
 
 ## Active Handoff（当前交接进度）
 
-- 当前进度：路径 seam、sensor_full TF/GPS/RViz、Web payload 原子校验和本轮 hill 地面分割均已完成；当前只剩提交与交接审查。
-- 当前提交：待将本轮代码和交接记录提交到本地 `HEAD`；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
-- 验证状态：4 项地面分割回归、10 项 sensor-chain、mower_coverage 16 tests、既有障碍物/规划器回归、单文件 lint/pep257、三包构建和获准本地 safe/direct 运行通过；`outdoor_sim` lint/xmllint 仍有既有基线失败。
+- 当前进度：路径 seam、sensor_full TF/GPS/RViz、Web payload 原子校验、hill 地面分割和 safe scan freshness/validity 门禁已完成；双轴审查指出的地面模型自举、局部支撑、容差、依赖、CTest 和执行器 fail-open 问题已逐一修复并复验。
+- 当前提交：本地 `HEAD`（`Harden low-obstacle safe scanning`）已提交；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
+- 验证状态：专项 8 项地面分割、10 项 sensor-chain、safe freshness/validity 3 项、`outdoor_sim` 构建/安装和新 CTest 通过；获准本地 `mower_coverage` 19/19 通过、障碍物/规划器回归仍通过，但本轮 clearance/support 和 scan freshness 变更后的真实 Web safe 长跑尚待复验；`outdoor_sim` lint/xmllint 仍有既有基线失败。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
-- 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车，不宣称点云时间回退/CPU 性能专项完成。原始 `/odom` 与融合 `/odometry/filtered` 的控制契约仍未决；硬件与旧 Nav2 入口是否推广地面分割也未决。
+- 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。原始 `/odom` 与融合 `/odometry/filtered` 的控制契约仍未决；硬件与旧 Nav2 入口是否推广地面分割也未决。
 - 本次实现：`hill_full` 默认关闭 `/odom→TF` 中继，`hill_ekf` 删除重复 `map→odom`、改为 `odom→camera_init`、配置仿真 GPS datum，并将仿真 EKF 频率从 30 Hz 调整为 20 Hz；`hill_sim/web_minimal` 默认中继行为保留。`multi_area_definer` 先校验整批 Web payload，再原子替换任务状态，非法批次保留旧任务。
-- 当前会话进度（实时）：已实现并接入 `hill_ground_obstacle_scan.py`；安全模式保留低于 1m 障碍检测，不再使用 `min_height=1.0` 绕过坡面误报；单实例最终 safe 35 秒前进 305 次、倒车 0 次、前方 scan 命中 0 次。
-- 下一步：完成固定点双轴代码审查后提交本地 commit；不要推送。硬件 profile 与非 hill 旧 Nav2 入口的地面分割另行评审。
+- 当前会话进度（实时）：审查修复已接入 `hill_ground_obstacle_scan.py`；安全模式保留低于 1m、包括 5 cm 相对地面障碍检测，不再使用 `min_height=1.0` 绕过坡面误报；最终真实探针已证明坡面无障碍不误报，但完整 Web safe 长跑仍需专门复验。
+- 下一步：确认工作区保持干净即可交接；不要推送。硬件 profile 与非 hill 旧 Nav2 入口的地面分割另行评审。

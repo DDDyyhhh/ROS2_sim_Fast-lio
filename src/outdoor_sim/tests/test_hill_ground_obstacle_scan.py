@@ -35,7 +35,7 @@ class HillGroundObstacleScanTest(unittest.TestCase):
             ground,
             min_range=0.35,
             ground_cell_size=0.25,
-            ground_clearance=0.12,
+            ground_clearance=0.03,
         )
 
         self.assertEqual(len(obstacles), 0)
@@ -64,6 +64,84 @@ class HillGroundObstacleScanTest(unittest.TestCase):
                 np.any(np.all(np.isclose(detected, point), axis=1)),
                 msg=f"low obstacle was filtered: {point}",
             )
+
+    def test_five_centimeter_obstacle_is_kept(self):
+        ground = self.make_ground_points()
+        obstacle_base = np.asarray([
+            (0.8, -0.2, 0.2 + 0.55 * 0.8 - 0.25 * -0.2),
+            (1.0, -0.2, 0.2 + 0.55 * 1.0 - 0.25 * -0.2),
+            (0.8, 0.0, 0.2 + 0.55 * 0.8),
+            (1.0, 0.0, 0.2 + 0.55 * 1.0),
+        ])
+        obstacle = obstacle_base.copy()
+        obstacle[:, 2] += 0.05
+
+        detected = extract_obstacle_points(
+            np.vstack((ground, obstacle)),
+            min_range=0.35,
+            ground_cell_size=0.25,
+            ground_clearance=0.03,
+        )
+
+        for point in obstacle:
+            self.assertTrue(
+                np.any(np.all(np.isclose(detected, point), axis=1)),
+                msg=f"five-centimeter obstacle was filtered: {point}",
+            )
+
+    def test_obstacle_only_returns_cannot_create_ground_model(self):
+        anchors = [0.625 + 0.25 * i for i in range(8)]
+        offsets = [(0.00, 0.00), (0.03, 0.03), (0.06, 0.06)]
+        obstacle = np.asarray([
+            (x + dx, y, 0.4)
+            for x in anchors
+            for dx, y in offsets
+        ])
+
+        detected = extract_obstacle_points(
+            obstacle,
+            min_range=0.35,
+            ground_cell_size=0.25,
+        )
+
+        np.testing.assert_allclose(detected, obstacle)
+
+    def test_dense_obstacle_plane_cannot_create_ground_model(self):
+        x_anchors = [0.625 + 0.25 * i for i in range(8)]
+        y_anchors = [0.625, 0.875, 1.125, 1.625]
+        offsets = [(0.00, 0.00), (0.03, 0.03), (0.06, 0.06)]
+        obstacle = np.asarray([
+            (x + dx, y + dy, 0.4)
+            for x in x_anchors
+            for y in y_anchors
+            for dx, dy in offsets
+        ])
+
+        detected = extract_obstacle_points(
+            obstacle,
+            min_range=0.35,
+            ground_cell_size=0.25,
+            ground_clearance=0.03,
+        )
+
+        np.testing.assert_allclose(detected, obstacle)
+
+    def test_point_without_local_ground_support_is_kept(self):
+        ground = self.make_ground_points()
+        x, y = 5.0, 0.0
+        unsupported = np.asarray([(
+            x, y, 0.2 + 0.55 * x - 0.25 * y,
+        )])
+
+        detected = extract_obstacle_points(
+            np.vstack((ground, unsupported)),
+            min_range=0.35,
+            ground_cell_size=0.25,
+            ground_clearance=0.12,
+        )
+
+        self.assertTrue(
+            np.any(np.all(np.isclose(detected, unsupported[0]), axis=1)))
 
     def test_points_without_ground_support_are_kept_fail_safe(self):
         obstacle = np.asarray([(1.0, 0.0, 0.25)], dtype=float)

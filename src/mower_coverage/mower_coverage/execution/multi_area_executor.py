@@ -20,6 +20,7 @@ multi_area_executor.py — 多区域路径执行器（带 LiDAR 避障）
 import json
 import math
 import os
+import time
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -49,6 +50,7 @@ class MultiAreaExecutor(Node):
             ('execution_mode', 'safe'),          # direct | safe
             ('obstacle_stop_range', 0.8),         # 前方 0.8m 内有障碍物 → 停车
             ('obstacle_scan_angle', 60.0),        # 前方 ±30° 扫描范围（度）
+            ('scan_timeout', 0.5),                # safe 模式传感器超时 → 停车
         ]
         for name, default in param_defaults:
             if not self.has_parameter(name):
@@ -62,6 +64,7 @@ class MultiAreaExecutor(Node):
         self.execution_mode = self.get_parameter('execution_mode').value
         self.obstacle_stop_range = self.get_parameter('obstacle_stop_range').value
         self.obstacle_scan_angle = self.get_parameter('obstacle_scan_angle').value
+        self.scan_timeout = float(self.get_parameter('scan_timeout').value)
 
         # 状态
         self.waypoints = []         # [(x, y, speed), ...]
@@ -81,6 +84,9 @@ class MultiAreaExecutor(Node):
         self.obstacle_angle = 0.0       # 障碍物方向（弧度）
         self.obstacle_distance = 999.0  # 障碍物距离（m）
         self.obstacle_brake_count = 0   # 连续刹车计数（用于恢复决策）
+        self.scan_received = self.execution_mode != 'safe'
+        self.scan_valid = self.execution_mode != 'safe'
+        self.last_scan_monotonic = None
 
         # 里程计
         self.odom_sub = self.create_subscription(
@@ -151,9 +157,28 @@ class MultiAreaExecutor(Node):
     def scan_callback(self, msg):
         """处理 LiDAR 扫描数据 — 检测前方障碍物"""
         self.latest_scan = msg
+        self.scan_received = True
+        self.last_scan_monotonic = time.monotonic()
         self.obstacle_detected = False
         self.obstacle_angle = 0.0
         self.obstacle_distance = 999.0
+
+        self.scan_valid = bool(msg.ranges) and all((
+            math.isfinite(msg.angle_min),
+            math.isfinite(msg.angle_max),
+            math.isfinite(msg.angle_increment),
+            msg.angle_increment > 0.0,
+            msg.angle_max > msg.angle_min,
+            math.isfinite(msg.range_min),
+            math.isfinite(msg.range_max),
+            msg.range_min >= 0.0,
+            msg.range_max > msg.range_min,
+        ))
+        self.scan_valid = self.scan_valid and not any(
+            math.isnan(value) or value == -math.inf
+            for value in msg.ranges)
+        if not self.scan_valid:
+            return
 
         angle_min = msg.angle_min
         angle_increment = msg.angle_increment
@@ -173,6 +198,20 @@ class MultiAreaExecutor(Node):
                     if range_val < self.obstacle_distance:
                         self.obstacle_distance = range_val
                         self.obstacle_angle = angle
+
+    def _scan_is_fresh(self):
+        """Return whether safe mode has a valid, recent scan to trust."""
+        if self.execution_mode != 'safe':
+            return True
+        return (
+            self.scan_received
+            and self.scan_valid
+            and self.last_scan_monotonic is not None
+            and (
+                time.monotonic() - self.last_scan_monotonic
+                <= self.scan_timeout
+            )
+        )
 
     def path_callback(self, msg):
         """从规划器接收路径（任何时候收到都更新）
@@ -300,6 +339,10 @@ class MultiAreaExecutor(Node):
         # ==========================================================
         # LiDAR 避障检查（safe 模式）
         # ==========================================================
+        if self.execution_mode == 'safe' and not self._scan_is_fresh():
+            self._stop_robot()
+            return
+
         if self.execution_mode == 'safe' and self.obstacle_detected:
             self.obstacle_brake_count += 1
             self._stop_robot()
