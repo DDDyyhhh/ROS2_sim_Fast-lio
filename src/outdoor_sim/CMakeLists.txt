@@ -39,6 +39,7 @@ install(PROGRAMS
   scripts/odom_to_tf.py
   scripts/clock_filter.py
   scripts/tf_waiter.py
+  scripts/hill_ground_obstacle_scan.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

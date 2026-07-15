@@ -20,9 +20,15 @@ class SensorChainContractTest(unittest.TestCase):
     def test_pointcloud_converter_receives_velodyne_topic(self):
         launch = read("src/outdoor_sim/launch/hill_nav2_local.launch.py")
 
-        self.assertIn('(\"cloud_in\", \"/velodyne_points\")', launch)
-        self.assertNotIn(
-            '(\"/velodyne_points\", \"/velodyne_points\")', launch)
+        self.assertIn('executable="hill_ground_obstacle_scan.py"', launch)
+        self.assertIn('"input_topic": "/velodyne_points"', launch)
+        self.assertNotIn('"min_height"', launch)
+
+    def test_hill_scan_keeps_low_obstacle_detection_contract(self):
+        launch = read("src/outdoor_sim/launch/hill_nav2_local.launch.py")
+
+        self.assertIn('"ground_clearance": 0.15', launch)
+        self.assertIn('"range_min": 0.2', launch)
 
     def test_safe_executor_uses_sensor_data_qos_for_scan(self):
         source = read(
