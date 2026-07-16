@@ -170,12 +170,12 @@
 - Most likely revisit: UM982 实际 NMEA 输出与 ARM64 `nmea_navsat_driver` 可用性；需目标机原始串口证据，不能凭型号或截图猜测。
 - Edge cases found: 48（新增 Docker 缺失、串口稳定路径、NavSatStatus 语义、ROS 日志目录限制、三串口角色不明和 registry/context 限制）。
 - Verification status: 新增部署静态回归 5/5、`mower_coverage`/`mower_hardware` 构建、目标机 ARM64 镜像构建/容器 smoke 和 Compose config 通过；独立测试 23/24，唯一失败为沙箱 socket 限制；UM982 `/gps/fix` 运行态尚未验证。
-- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；优先执行 RK3588 SSH 盘点、原生 Docker 构建和 UM982 NMEA 只读验收。
+- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；优先确认 Prolific ttyUSB3 的物理连接对象，再进行 UM982 NMEA 和只读容器验收。
 
 ## Active Handoff（当前交接进度）
 
 - 当前进度：已新增独立 `mower_hardware` 包、`rtk_readonly.launch.py`、RK3588 ARM64 Docker/Compose 部署骨架，并修正 WebSocket 远程主机地址和 GNSS 状态误标；不启动仿真、规划器、执行器、CAN 或电机。
-- 当前提交：本地改动待提交；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
+- 当前提交：`f0d0955 Support ARM64 registry mirror deployment`；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
 - 验证状态：`mower_coverage`/`mower_hardware` 构建成功，部署静态回归 5/5，目标机 ARM64 镜像构建、无设备容器 smoke 和 Compose config 通过；独立测试 23/24，唯一失败是沙箱 TCP socket 权限限制。UM982 NMEA、`/gps/fix`、Web 浏览器和运行容器验收尚未执行。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
 - 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。实机侧尚无 CAN、Mid-360/IMU 驱动，第一阶段只允许 UM982 只读。
