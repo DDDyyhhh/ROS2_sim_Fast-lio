@@ -19,7 +19,7 @@
 // 配置
 // =============================================================
 const CONFIG = {
-    rosbridgeUrl: 'ws://localhost:9090',
+    rosbridgeUrl: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname || 'localhost'}:9090`,
     mapTileUrl: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     mapTileAttr: '&copy; <a href="https://openstreetmap.org">OSM</a>',
     satelliteTileUrl: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
@@ -275,9 +275,7 @@ function setupROSSubscribers() {
         const status = msg.status?.status;
 
         // 更新状态文本
-        const statusText = status === 2 ? '🛰️ RTK固定解' :
-                          status === 1 ? '🛰️ RTK浮点解' :
-                          status === 0 ? '🛰️ 单点定位' : '🛰️ 无定位';
+        const statusText = status >= 0 ? '🛰️ GNSS定位有效' : '🛰️ 无定位';
         document.getElementById('gps-status').textContent = statusText;
 
         // 调试：显示原始 GPS 坐标

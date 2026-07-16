@@ -16,6 +16,8 @@
 - Web 输入错误的“明确错误”沿用现有单向 `/web/areas` topic 能力，以 `multi_area_definer` 的 error log 返回；未新增响应 topic 或修改前端协议，避免把一次性安全修复扩展成新的通信契约。
 - 完整 profile 实际 EKF 与 FAST-LIO 输出约 20 Hz；将仿真 EKF 频率从 30 Hz 调整到 20 Hz，只匹配已测得的输入负载，未改变融合变量或硬件配置。
 - 本轮诊断时当前 ROS/Gazebo 进程不在本会话可见的进程表中，因此没有擅自启动第二个仿真实例；结论基于同一工作区保存的完整运行日志和可重复的内存控制探针，下一窗口必须补一次实时 topic 快照。
+- 本轮按实机部署计划新增 `mower_hardware`、RK3588 Docker/Compose 和 RTK 只读 profile；目标机尚未完成 SSH 盘点，因此只实现可同步的仓库侧骨架，不宣称 ARM64 镜像或串口验收通过。
+- 计划默认使用标准 `nmea_navsat_driver`，但当前 WSL 未安装该运行包且没有 UM982 原始输出；保留参数化串口入口，若目标机 ARM64 包或 NMEA 格式不满足，再以可逆方式切换驱动实现。
 
 # Discovered edge cases
 
@@ -65,6 +67,12 @@
 - safe scan 复审还发现 `-Inf` 不能代表“无回波”（只有 `+Inf` 可以）；现已将 `-Inf` 与 NaN 一样判为无效并停车，回归覆盖 NaN、`+Inf` 和 `-Inf`。
 - 复审指出 0.08m 容差仍会漏掉 5cm 突起；将安全容差降至 0.03m，并加入 5cm 障碍回归。该阈值仍代表测量/拟合容差，不是绝对高度过滤。
 - 复审还发现执行器在 safe 模式启动、点云节点崩溃或 `/scan` 陈旧时默认继续跟踪路径；补充 0.5s scan freshness/validity 门禁，安全模式在首帧缺失、格式无效或超时期间只发布停车命令，direct 模式保持原行为。
+- 当前 WSL 没有 Docker CLI，不能在开发机执行 `docker compose build`；Docker 构建明确留给 RK3588 原生 ARM64 环境。
+- 现有 Web 页面把 `NavSatStatus.status` 数字误标为 RTK 固定/浮点/单点；首版改为只显示“GNSS 定位有效/无定位”，避免把 `/gps/fix` 的通用状态当成 RTK 解类型。
+- ROS launch 默认会在 `~/.ros/log` 创建目录；当前沙箱该路径只读，使用 `ROS_LOG_DIR=/tmp/mower_ros_logs` 后硬件 launch 参数解析正常。
+- Docker Compose 使用稳定的 `/dev/serial/by-id` 主机设备映射，并明确不映射 `can0`、不使用 `privileged`；真实设备路径、波特率和权限仍需目标机确认。
+- `nmea_navsat_driver` 和 `rosbridge_server` 当前未安装在 WSL 的 ROS 环境中，但目标 Docker 镜像会在 RK3588 ARM64 上安装；本地只能做 launch 结构验证。
+- 目标机改用有线网络后 SSH 已可达，但实际 OS、Docker Compose、UM982 设备路径、波特率和 NMEA 内容仍未从目标机回读。
 
 # Questions for review
 
@@ -85,6 +93,9 @@
 - 本轮审查新增红灯：`test_global_detour_avoids_all_separated_obstacles`；修复前命中 `(5.3, 1.9) → (2.7, -0.2)`，说明候选点安全不等于候选线段安全。
 - 本轮新增红灯：`test_angled_obstacle_does_not_delete_area_two_coverage` 与 `test_two_areas_keep_second_area_coverage_with_obstacles`，均已在 seam 修复后通过，并复验降采样路径安全。
 - 本轮建议已落实：保留每个区域已通过局部障碍检查的 `wp`，只对“前一区域末点 → 后一区域首个覆盖点”的 transit 连接做全局碰撞修复；不再对拼接后的所有区域路径统一流式调用 `_fix_obstacle_crossings()`，全局障碍物在连接前已收集。
+- 实机第一阶段必须先完成 RK3588 OS/架构、Docker Compose、UM982 串口路径、波特率和原始 NMEA 盘点；在此之前不能宣称 `/gps/fix` 运行态验收。
+- RTK 固定/浮点状态是否需要浏览器显示仍应通过独立 `/rtk/status` 契约确认；本轮不复用 `NavSatStatus.status` 猜测。
+- `code-review` 双轴代理两次等待均未返回报告，已关闭；主代理按同一 Standards/Spec 要求人工复核当前改动，未发现需要阻断提交的硬性问题。
 
 # Verification evidence
 
@@ -128,22 +139,26 @@
 - 本轮审查前版本真实路径 safe 绿灯：同一 Web 区域规划 `28002` 点、执行器收到 `3852` 点；35 秒内 `/cmd_vel` 前进 `305`、倒车 `0`、停止 `16`，`/scan` 前方有效命中 `0`，原始 `/odom` 从约 `(-25.77,15.46)` 到 `(2.15,15.83)`；该证据不替代当前阈值/门禁版本复验。
 - 本轮审查前版本 direct 对照绿灯：清洁单实例、同一路径、同一地面过滤器；35 秒内 `/cmd_vel` 前进 `314`、倒车 `0`、停止 `14`，原始 `/odom` 从约 `(-19.91,15.46)` 到 `(8.94,15.90)`；规划器和 direct 链未改动。
 - 运行中曾发现两套同名 profile 残留导致 `/scan` 双发布；已清理并用单发布者重跑，最终证据未使用重复实例数据。
+- 新增 `mower_hardware` 包和 `rtk_readonly.launch.py`；`colcon build --symlink-install --packages-select mower_coverage mower_hardware` 成功，安装后的 launch 参数通过 `ros2 launch ... --show-args` 解析。
+- 新增部署静态回归 5/5 通过；Compose YAML、host network、无 `privileged`、只映射 UM982 串口、无 CAN 映射和 WebSocket 主机动态地址均通过检查。
+- 本轮 `mower_coverage` 独立测试为 23/24；唯一失败仍是沙箱创建临时 TCP socket 的 `PermissionError`。选定包 `colcon test` 的失败来自同一 Web socket 限制；`outdoor_sim` 既有 lint/pep257/xmllint 结果未纳入本次范围。
+- 目标机尚未执行 Docker 原生构建、容器重启、`/gps/fix` 频率、UM982 NMEA、Win11 浏览器和 `/cmd_vel` 无发布者验收；这些是下一阶段现场证据。
 
 # Summary
 
-- Deviations count: 16（含本轮 hill 地面分割、混合字段解析、NumPy 性能路径、近场范围恢复、异常停车扫描和审查修复）。
-- Most likely revisit: 8 m 单平面模型对真实硬件非平面地形的泛化；需要带低矮障碍的现场点云验收，不能仅凭仿真宣称安全完备。
-- Edge cases found: 41（新增混合 PointCloud2 datatype、量化性能、重复 profile、车体自滤波、转换异常 fail-safe 和地面模型自举）。
-- Verification status: 8 项地面分割回归、10 项传感器契约、safe freshness/validity 3 项、outdoor_sim 构建/安装和专项 CTest 通过；mower_coverage 19 tests、既有障碍物/规划器回归仍通过，但本轮阈值变更后的真实 Web safe 长跑尚待复验；outdoor_sim 仍有既有 lint/xmllint 基线失败。
-- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；优先做硬件点云回放/现场标定，或决定是否将同一过滤器推广到旧 Nav2 入口。
+- Deviations count: 18（含本轮实机 Docker/RTK 部署骨架、标准 NMEA 驱动入口和 GNSS 状态显示修正）。
+- Most likely revisit: UM982 实际 NMEA 输出与 ARM64 `nmea_navsat_driver` 可用性；需目标机原始串口证据，不能凭型号或截图猜测。
+- Edge cases found: 45（新增 Docker 缺失、串口稳定路径、NavSatStatus 语义和 ROS 日志目录限制）。
+- Verification status: 新增部署静态回归 5/5、`mower_coverage`/`mower_hardware` 构建和 launch 参数解析通过；独立测试 23/24，唯一失败为沙箱 socket 限制；目标机 Docker/UM982 运行态尚未验证。
+- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；优先执行 RK3588 SSH 盘点、原生 Docker 构建和 UM982 NMEA 只读验收。
 
 ## Active Handoff（当前交接进度）
 
-- 当前进度：路径 seam、sensor_full TF/GPS/RViz、Web payload 原子校验、hill 地面分割和 safe scan freshness/validity 门禁已完成；双轴审查指出的地面模型自举、局部支撑、容差、依赖、CTest 和执行器 fail-open 问题已逐一修复并复验。
-- 当前提交：本地 `HEAD`（`Harden low-obstacle safe scanning`）已提交；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
-- 验证状态：专项 8 项地面分割、10 项 sensor-chain、safe freshness/validity 3 项、`outdoor_sim` 构建/安装和新 CTest 通过；获准本地 `mower_coverage` 19/19 通过、障碍物/规划器回归仍通过，但本轮 clearance/support 和 scan freshness 变更后的真实 Web safe 长跑尚待复验；`outdoor_sim` lint/xmllint 仍有既有基线失败。
+- 当前进度：已新增独立 `mower_hardware` 包、`rtk_readonly.launch.py`、RK3588 ARM64 Docker/Compose 部署骨架，并修正 WebSocket 远程主机地址和 GNSS 状态误标；不启动仿真、规划器、执行器、CAN 或电机。
+- 当前提交：本地改动待提交；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
+- 验证状态：`mower_coverage`/`mower_hardware` 构建成功，部署静态回归 5/5，launch 参数解析通过；独立测试 23/24，唯一失败是沙箱 TCP socket 权限限制。目标机原生 Docker 构建、UM982 NMEA、`/gps/fix` 和浏览器验收尚未执行。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
-- 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。原始 `/odom` 与融合 `/odometry/filtered` 的控制契约仍未决；硬件与旧 Nav2 入口是否推广地面分割也未决。
+- 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。实机侧尚无 CAN、Mid-360/IMU 驱动，第一阶段只允许 UM982 只读。
 - 本次实现：`hill_full` 默认关闭 `/odom→TF` 中继，`hill_ekf` 删除重复 `map→odom`、改为 `odom→camera_init`、配置仿真 GPS datum，并将仿真 EKF 频率从 30 Hz 调整为 20 Hz；`hill_sim/web_minimal` 默认中继行为保留。`multi_area_definer` 先校验整批 Web payload，再原子替换任务状态，非法批次保留旧任务。
-- 当前会话进度（实时）：审查修复已接入 `hill_ground_obstacle_scan.py`；安全模式保留低于 1m、包括 5 cm 相对地面障碍检测，不再使用 `min_height=1.0` 绕过坡面误报；最终真实探针已证明坡面无障碍不误报，但完整 Web safe 长跑仍需专门复验。
-- 下一步：确认工作区保持干净即可交接；不要推送。硬件 profile 与非 hill 旧 Nav2 入口的地面分割另行评审。
+- 当前会话进度（实时）：仓库侧实机部署骨架已完成；WSL 已可 SSH 到 RK3588，下一步执行 OS/Docker/串口/CAN 只读盘点。目标机未完成盘点前，不配置真实 `.env`、不启动容器、不触碰电机。
+- 下一步：收到 RK3588 盘点结果后确认 `UM982_HOST_DEVICE`、波特率和 ARM64 ROS 包，再在目标机原生 `docker compose build && docker compose up -d`；随后验收 `/gps/fix`、Web `8080/9090` 和 `/cmd_vel` 无发布者。不要推送未经现场验证的配置。

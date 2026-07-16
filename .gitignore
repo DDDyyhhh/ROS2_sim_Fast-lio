@@ -37,3 +37,6 @@ fastlio_map.yaml
 bug*.png
 frames_*.gv
 frames_*.pdf
+
+# ── Local hardware deployment settings ────────────────────
+deploy/rk3588/.env

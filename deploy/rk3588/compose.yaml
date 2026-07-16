@@ -1,0 +1,24 @@
+services:
+  mower_rtk:
+    build:
+      context: ../..
+      dockerfile: deploy/rk3588/Dockerfile
+    image: ${MOWER_IMAGE:-mower-rk3588:humble-rtk}
+    container_name: ${MOWER_CONTAINER_NAME:-mower-rkt}
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      ROS_LOCALHOST_ONLY: ${ROS_LOCALHOST_ONLY:-0}
+      UM982_DEVICE: ${UM982_CONTAINER_DEVICE:-/dev/um982}
+      UM982_BAUD: ${UM982_BAUD:-115200}
+      UM982_FRAME_ID: ${UM982_FRAME_ID:-rtk_link}
+      HTTP_PORT: ${HTTP_PORT:-8080}
+      ROSBRIDGE_PORT: ${ROSBRIDGE_PORT:-9090}
+    devices:
+      - "${UM982_HOST_DEVICE:?Set UM982_HOST_DEVICE in .env}:${UM982_CONTAINER_DEVICE:-/dev/um982}:rwm"
+    command: ["ros2", "launch", "mower_hardware", "rtk_readonly.launch.py"]

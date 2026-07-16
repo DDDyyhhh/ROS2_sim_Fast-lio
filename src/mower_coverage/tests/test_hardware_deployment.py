@@ -1,0 +1,62 @@
+from pathlib import Path
+import ast
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEPLOY_DIR = REPO_ROOT / 'deploy' / 'rk3588'
+LAUNCH_FILE = (
+    REPO_ROOT / 'src' / 'mower_hardware' / 'launch'
+    / 'rtk_readonly.launch.py'
+)
+APP_FILE = (
+    REPO_ROOT / 'src' / 'mower_coverage' / 'web_frontend' / 'app.js'
+)
+
+
+def test_rk3588_deployment_has_required_files():
+    for name in ('Dockerfile', 'compose.yaml', '.env.example', 'entrypoint.sh',
+                 'README.md'):
+        assert (DEPLOY_DIR / name).is_file()
+
+
+def test_hardware_image_excludes_simulation_runtime():
+    dockerfile = (DEPLOY_DIR / 'Dockerfile').read_text()
+
+    assert 'ros:humble-ros-base-jammy' in dockerfile
+    assert 'ros-humble-nmea-navsat-driver' in dockerfile
+    assert 'ros-humble-rosbridge-server' in dockerfile
+    assert '--packages-select mower_coverage mower_hardware' in dockerfile
+    assert 'outdoor_sim' not in dockerfile
+    assert 'fast_lio' not in dockerfile
+
+
+def test_compose_maps_only_the_rtk_device():
+    compose = (DEPLOY_DIR / 'compose.yaml').read_text()
+
+    assert 'network_mode: host' in compose
+    assert 'UM982_HOST_DEVICE' in compose
+    assert 'UM982_CONTAINER_DEVICE' in compose
+    assert 'can0' not in compose
+    assert 'privileged: true' not in compose
+    assert 'no-new-privileges:true' in compose
+
+
+def test_rtk_launch_is_read_only_and_uses_canonical_fix_contract():
+    launch = LAUNCH_FILE.read_text()
+
+    ast.parse(launch)
+    assert "package='nmea_navsat_driver'" in launch
+    assert "('fix', '/gps/fix')" in launch
+    assert "'frame_id': frame_id" in launch
+    assert "'use_sim_time': False" in launch
+    assert "'/cmd_vel'" not in launch
+    assert "'rtk_link'" in launch
+
+
+def test_websocket_url_uses_the_host_serving_the_page():
+    app = APP_FILE.read_text()
+
+    assert 'window.location.hostname' in app
+    assert 'ws://localhost:9090' not in app
+    assert 'RTK固定解' not in app
+    assert 'GNSS定位有效' in app
