@@ -21,18 +21,24 @@ def test_rk3588_deployment_has_required_files():
 
 def test_hardware_image_excludes_simulation_runtime():
     dockerfile = (DEPLOY_DIR / 'Dockerfile').read_text()
+    dockerignore = (REPO_ROOT / '.dockerignore').read_text()
 
-    assert 'ros:humble-ros-base-jammy' in dockerfile
+    assert 'ARG ROS_BASE_IMAGE=ros:humble-ros-base-jammy' in dockerfile
     assert 'ros-humble-nmea-navsat-driver' in dockerfile
     assert 'ros-humble-rosbridge-server' in dockerfile
     assert '--packages-select mower_coverage mower_hardware' in dockerfile
     assert 'outdoor_sim' not in dockerfile
     assert 'fast_lio' not in dockerfile
+    assert '*' in dockerignore
+    assert '!src/mower_coverage/**' in dockerignore
+    assert '!src/mower_hardware/**' in dockerignore
+    assert '!deploy/rk3588/entrypoint.sh' in dockerignore
 
 
 def test_compose_maps_only_the_rtk_device():
     compose = (DEPLOY_DIR / 'compose.yaml').read_text()
 
+    assert 'ROS_BASE_IMAGE' in compose
     assert 'network_mode: host' in compose
     assert 'UM982_HOST_DEVICE' in compose
     assert 'UM982_CONTAINER_DEVICE' in compose

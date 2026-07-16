@@ -55,6 +55,10 @@ docker compose build
 docker compose up -d
 ```
 
+当前目标网络无法连接 Docker Hub，`.env.example` 默认使用可达的
+`docker.m.daocloud.io` 镜像前缀；如果目标网络可访问官方 registry，可将
+`ROS_BASE_IMAGE` 改为 `ros:humble-ros-base-jammy`。
+
 推荐从 WSL 同步时排除 `build/`、`install/`、`log/`，让目标机原生构建
 ARM64 镜像。
 

@@ -3,9 +3,15 @@
 .claude
 .codex
 .agents
-build
-install
-log
-**/__pycache__
-**/*.pyc
-*.swp
+# The hardware image only needs these two ROS packages and its entrypoint.
+# Keep the Docker context small on the RK3588; simulation, docs, Git metadata,
+# generated artifacts, and all unrelated files stay outside the context.
+*
+!src/
+!src/mower_coverage/
+!src/mower_coverage/**
+!src/mower_hardware/
+!src/mower_hardware/**
+!deploy/
+!deploy/rk3588/
+!deploy/rk3588/entrypoint.sh

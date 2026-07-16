@@ -1,4 +1,5 @@
-FROM ros:humble-ros-base-jammy
+ARG ROS_BASE_IMAGE=ros:humble-ros-base-jammy
+FROM ${ROS_BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

@@ -18,6 +18,12 @@
 - 本轮诊断时当前 ROS/Gazebo 进程不在本会话可见的进程表中，因此没有擅自启动第二个仿真实例；结论基于同一工作区保存的完整运行日志和可重复的内存控制探针，下一窗口必须补一次实时 topic 快照。
 - 本轮按实机部署计划新增 `mower_hardware`、RK3588 Docker/Compose 和 RTK 只读 profile；目标机尚未完成 SSH 盘点，因此只实现可同步的仓库侧骨架，不宣称 ARM64 镜像或串口验收通过。
 - 计划默认使用标准 `nmea_navsat_driver`，但当前 WSL 未安装该运行包且没有 UM982 原始输出；保留参数化串口入口，若目标机 ARM64 包或 NMEA 格式不满足，再以可逆方式切换驱动实现。
+- 目标机实测为 Ubuntu 22.04.5 ARM64，符合计划基线；但 Docker/Compose 尚未安装，需先完成目标机主机准备后才能进行原生镜像构建。
+- Codex 的 WSL 执行环境可以到达 `192.168.9.138:22`，但没有用户的 SSH key 且不能代填密码；自动化只读串口探测因 `Permission denied (publickey,password)` 退出，需用户配置专用 key 或在自己的终端执行命令。
+- 首次目标机 Docker 构建发现未排除仿真/FAST-LIO 源码时上下文达到 `1.113GB`，已停止并将 `.dockerignore` 收紧为只保留硬件镜像需要的包；该修改可逆且不改变运行时内容。
+- 目标机 Docker 拉取 `ros:humble-ros-base-jammy` 时访问 Docker Hub manifest 超时；尚未配置 registry mirror 或代理，不能把此次失败归因于 Dockerfile/ROS 依赖。
+- 目标机可达 DaoCloud registry 后，Dockerfile 增加 `ROS_BASE_IMAGE` 构建参数；实际 ARM64 构建使用 `docker.m.daocloud.io/library/ros:humble-ros-base-jammy`，默认官方镜像仍保留，镜像源属于部署环境配置。
+- allowlist `.dockerignore` 将硬件构建上下文从 `977.9MB` 降到 `135.9MB`；只保留 `mower_coverage`、`mower_hardware` 和 entrypoint，未改变最终镜像包内容。
 
 # Discovered edge cases
 
@@ -73,6 +79,9 @@
 - Docker Compose 使用稳定的 `/dev/serial/by-id` 主机设备映射，并明确不映射 `can0`、不使用 `privileged`；真实设备路径、波特率和权限仍需目标机确认。
 - `nmea_navsat_driver` 和 `rosbridge_server` 当前未安装在 WSL 的 ROS 环境中，但目标 Docker 镜像会在 RK3588 ARM64 上安装；本地只能做 launch 结构验证。
 - 目标机改用有线网络后 SSH 已可达，但实际 OS、Docker Compose、UM982 设备路径、波特率和 NMEA 内容仍未从目标机回读。
+- 目标机 OS 盘点由用户终端成功取得；Codex 自动 SSH 还未取得认证权限，不能直接代替用户安装 Docker。
+- key-based SSH 已打通；自动化复核确认用户 `cat` 属于 `sudo` 但不属于 `dialout`，因此当前会话无法读取三个 USB 串口。Docker/Compose 仍未安装，需用户交互式 sudo 完成主机准备。
+- 目标机 `eth1` 已确认使用 `192.168.9.138`；`can0/can1` 均存在但为 DOWN，第一阶段不启动 CAN。UM982 当前暴露三个通用命名的 USB 串口，必须逐个识别 NMEA 口，不能按 `/dev/ttyUSB0` 猜测。
 
 # Questions for review
 
@@ -96,6 +105,11 @@
 - 实机第一阶段必须先完成 RK3588 OS/架构、Docker Compose、UM982 串口路径、波特率和原始 NMEA 盘点；在此之前不能宣称 `/gps/fix` 运行态验收。
 - RTK 固定/浮点状态是否需要浏览器显示仍应通过独立 `/rtk/status` 契约确认；本轮不复用 `NavSatStatus.status` 猜测。
 - `code-review` 双轴代理两次等待均未返回报告，已关闭；主代理按同一 Standards/Spec 要求人工复核当前改动，未发现需要阻断提交的硬性问题。
+- 目标机 SSH 用户名尚未记录；完成远程 Docker 安装和串口探测前需要确认该非敏感连接信息。
+- SSH 用户名已确认是 `cat`；剩余阻塞是为 Codex 提供不含密码的 key-based SSH，或由用户在 WSL/RK3588 终端执行目标机命令。
+- 三个 `/dev/serial/by-id/usb-Android_Android_0000-if02/03/04-port0` 设备的 UM982 端口角色尚未确认；需要保守地只读探测 NMEA，禁止同时让多个进程打开串口。
+- 目标机权限恢复后重新枚举：`ttyUSB0~2` 是 Quectel `2c7c:6002` 4G Modem 的 option 接口，`ttyUSB3` 是 Prolific `067b:23a3` USB-Serial；`ttyFIQ0` 是 Linux 调试控制台。对 ttyUSB3 的常见波特率只读探测均无 NMEA，物理线缆角色仍未确认。
+- 在确认 Prolific 线缆连接对象前，不得把 `/dev/ttyUSB3` 写入 `.env` 或启动 NMEA 驱动；若它连接电机控制板，读取/配置串口可能影响后续控制链。
 
 # Verification evidence
 
@@ -143,22 +157,28 @@
 - 新增部署静态回归 5/5 通过；Compose YAML、host network、无 `privileged`、只映射 UM982 串口、无 CAN 映射和 WebSocket 主机动态地址均通过检查。
 - 本轮 `mower_coverage` 独立测试为 23/24；唯一失败仍是沙箱创建临时 TCP socket 的 `PermissionError`。选定包 `colcon test` 的失败来自同一 Web socket 限制；`outdoor_sim` 既有 lint/pep257/xmllint 结果未纳入本次范围。
 - 目标机尚未执行 Docker 原生构建、容器重启、`/gps/fix` 频率、UM982 NMEA、Win11 浏览器和 `/cmd_vel` 无发布者验收；这些是下一阶段现场证据。
+- 目标机只读盘点证据：Linux `6.1.84`、Ubuntu `22.04.5`、`aarch64`、有线 `eth1=192.168.9.138`、Docker 命令不存在、`can0/can1` 存在但 DOWN、三个 `/dev/ttyUSB*` 及稳定 by-id 链接存在；尚未读取任何 UM982 NMEA。
+- key-based SSH 自动只读证据：`cat` 的组为 `cat,sudo,audio,video`，不是 `dialout`；三个串口均返回 `Permission denied`，Docker 和 Compose 命令不存在。目标 apt 源提供 ARM64 `docker.io` 与 `docker-compose-v2`。
+- 自动串口探测证据：Quectel Modem 为 `ttyUSB0~2`，Prolific 为 `ttyUSB3`；ttyUSB3 在 4800/9600/19200/38400/57600/115200/230400 接收设置下均无 NMEA 样本，未发送任何字节。
+- 首次 ARM64 构建证据：源码同步成功；Docker 发送 `1.113GB` 上下文后在拉取 Docker Hub 基础镜像阶段因网络超时退出，未创建目标镜像或启动容器。
+- 目标机 ARM64 构建证据：DaoCloud 基础镜像拉取成功（digest `sha256:afb40d6be65331c20a114d4e229a7ef099fed1b17bf6370daee193514b32aa16`）；收紧上下文后 `135.9MB` 原生构建成功，镜像 `mower-rk3588:humble-rtk` 为 `arm64/linux`。
+- 目标机容器 smoke 证据：无网络、无设备的临时容器中可枚举 `mower_coverage`、`mower_hardware`、`nmea_navsat_driver` 和 `rosbridge_server`，`rtk_readonly.launch.py --show-args` 通过；Compose config 通过，未创建 `mower-rkt`。
 
 # Summary
 
-- Deviations count: 18（含本轮实机 Docker/RTK 部署骨架、标准 NMEA 驱动入口和 GNSS 状态显示修正）。
+- Deviations count: 21（含本轮实机 Docker/RTK 部署骨架、标准 NMEA 驱动入口、GNSS 状态显示修正、目标机 Docker 缺失盘点和 registry/context 适配）。
 - Most likely revisit: UM982 实际 NMEA 输出与 ARM64 `nmea_navsat_driver` 可用性；需目标机原始串口证据，不能凭型号或截图猜测。
-- Edge cases found: 45（新增 Docker 缺失、串口稳定路径、NavSatStatus 语义和 ROS 日志目录限制）。
-- Verification status: 新增部署静态回归 5/5、`mower_coverage`/`mower_hardware` 构建和 launch 参数解析通过；独立测试 23/24，唯一失败为沙箱 socket 限制；目标机 Docker/UM982 运行态尚未验证。
+- Edge cases found: 48（新增 Docker 缺失、串口稳定路径、NavSatStatus 语义、ROS 日志目录限制、三串口角色不明和 registry/context 限制）。
+- Verification status: 新增部署静态回归 5/5、`mower_coverage`/`mower_hardware` 构建、目标机 ARM64 镜像构建/容器 smoke 和 Compose config 通过；独立测试 23/24，唯一失败为沙箱 socket 限制；UM982 `/gps/fix` 运行态尚未验证。
 - Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；优先执行 RK3588 SSH 盘点、原生 Docker 构建和 UM982 NMEA 只读验收。
 
 ## Active Handoff（当前交接进度）
 
 - 当前进度：已新增独立 `mower_hardware` 包、`rtk_readonly.launch.py`、RK3588 ARM64 Docker/Compose 部署骨架，并修正 WebSocket 远程主机地址和 GNSS 状态误标；不启动仿真、规划器、执行器、CAN 或电机。
 - 当前提交：本地改动待提交；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
-- 验证状态：`mower_coverage`/`mower_hardware` 构建成功，部署静态回归 5/5，launch 参数解析通过；独立测试 23/24，唯一失败是沙箱 TCP socket 权限限制。目标机原生 Docker 构建、UM982 NMEA、`/gps/fix` 和浏览器验收尚未执行。
+- 验证状态：`mower_coverage`/`mower_hardware` 构建成功，部署静态回归 5/5，目标机 ARM64 镜像构建、无设备容器 smoke 和 Compose config 通过；独立测试 23/24，唯一失败是沙箱 TCP socket 权限限制。UM982 NMEA、`/gps/fix`、Web 浏览器和运行容器验收尚未执行。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
 - 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。实机侧尚无 CAN、Mid-360/IMU 驱动，第一阶段只允许 UM982 只读。
 - 本次实现：`hill_full` 默认关闭 `/odom→TF` 中继，`hill_ekf` 删除重复 `map→odom`、改为 `odom→camera_init`、配置仿真 GPS datum，并将仿真 EKF 频率从 30 Hz 调整为 20 Hz；`hill_sim/web_minimal` 默认中继行为保留。`multi_area_definer` 先校验整批 Web payload，再原子替换任务状态，非法批次保留旧任务。
-- 当前会话进度（实时）：仓库侧实机部署骨架已完成；WSL 已可 SSH 到 RK3588，下一步执行 OS/Docker/串口/CAN 只读盘点。目标机未完成盘点前，不配置真实 `.env`、不启动容器、不触碰电机。
-- 下一步：收到 RK3588 盘点结果后确认 `UM982_HOST_DEVICE`、波特率和 ARM64 ROS 包，再在目标机原生 `docker compose build && docker compose up -d`；随后验收 `/gps/fix`、Web `8080/9090` 和 `/cmd_vel` 无发布者。不要推送未经现场验证的配置。
+- 当前会话进度（实时）：key-based SSH、Docker/Compose、dialout、目标机 ARM64 镜像构建和无设备 smoke 已完成；目标机已确认 Ubuntu 22.04.5 ARM64、有线 IP `192.168.9.138`、Quectel 4G Modem 三串口、Prolific ttyUSB3 和 DOWN 状态 CAN，但 UM982 物理连接/端口尚未确认。
+- 下一步：确认 Prolific 线缆连接对象和 UM982 输出；只有确定稳定设备路径/波特率并读到 NMEA 后，才生成 `.env`、启动 `mower-rkt`，再验收 `/gps/fix`、Web `8080/9090` 和 `/cmd_vel` 无发布者。

@@ -3,6 +3,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/rk3588/Dockerfile
+      args:
+        ROS_BASE_IMAGE: ${ROS_BASE_IMAGE:-ros:humble-ros-base-jammy}
     image: ${MOWER_IMAGE:-mower-rk3588:humble-rtk}
     container_name: ${MOWER_CONTAINER_NAME:-mower-rkt}
     restart: unless-stopped
