@@ -26,6 +26,7 @@
 - allowlist `.dockerignore` 将硬件构建上下文从 `977.9MB` 降到 `135.9MB`；只保留 `mower_coverage`、`mower_hardware` 和 entrypoint，未改变最终镜像包内容。
 - ARM64 镜像首次真实启动暴露了入口脚本与 ROS setup 的兼容性偏差：`set -u` 使 `AMENT_TRACE_SETUP_FILES` 未初始化时直接退出；保守改为 `set -e -o pipefail`，保留失败即停且不改 ROS 官方 setup。
 - CAN 交接资料目前只有 V1.0 手册，没有 DBC、下位机源码或 `candump` 抓包；本轮以手册为唯一协议来源，只实现纯离线解析/回放，不推断未定义帧，也不接触 `can0/can1`。
+- 用户已授权将 `docs/hardware/um982/UM982_User_Manual.pdf` 纳入仓库；它仅作为 UM982 参考资料，不包含运行凭据，本轮不据此修改串口配置或启动设备。
 - 为让现有 ROS 包的 `python3 -m unittest -v` 发现离线用例，补充 `src/mower_hardware/test/__init__.py`；这是测试发现入口的最小兼容改动，不影响运行时包。
 - 初版 `candump` 解析曾接受任意宽度的十六进制 ID；按经典 CAN 11 位标准帧契约收紧为最多 3 个十六进制字符，并补充启动握手、超时和连续解锁键审计。
 - 本轮按指定 baseline 执行双轴 review：Spec 初审指出扩展帧样式 ID 和回放安全审计缺口，已修正；Standards 仅指出交接前已有的 `deploy/rk3588/entrypoint.sh` 及部署测试属于另一范围，按工作区保护规则保留未回滚。CAN 回归 12/12、`py_compile` 和 `git diff --check` 通过。
@@ -193,6 +194,7 @@
 - 无线/室外复验：目标机 `wlan0=192.168.10.77`；Prolific 重新枚举为 `/dev/ttyUSB3`，恢复三类 LOG 后收到有效 `$GNRMC`/`$GNGGA`/`$G*GSV`。清空输入缓冲后 `SAVECONFIG` 明确返回 `response: OK`，随后约 12 秒收到 20 条 GGA、20 条 RMC、471 条 GSV。
 - CAN 协议回归证据：协议矩阵、纯离线解码和 `candump -L` 回放审计共 12 项测试通过；`mower_hardware` 的 `colcon test` 发现并通过全部 12 项，安装后反馈样例可导入解码。
 - 本轮构建证据：`colcon build --symlink-install` 全量 4 包通过；`git diff --check` 和 Python 语法检查通过。未启动 `can0/can1`，未发送帧，未接入 `/cmd_vel`。
+- 资料归档证据：`docs/hardware/um982/UM982_User_Manual.pdf` 已确认是 PDF 1.5 用户手册，纳入本轮资料归档。
 
 # Summary
 
@@ -205,7 +207,7 @@
 ## Active Handoff（当前交接进度）
 
 - 当前进度：已新增独立 `mower_hardware` 包、`rtk_readonly.launch.py`、RK3588 ARM64 Docker/Compose 部署骨架、CAN 协议矩阵和纯离线 `0x005/0x507` 解码/回放审计；不启动仿真、规划器、执行器、SocketCAN 或电机。
-- 当前提交：`679b6f6 Add offline CAN protocol decoder`；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。工作树仍保留交接前已有的部署入口修改和 `docs/hardware/um982/` 资料。
+- 当前提交：`9f6eb1a Update CAN handoff status`；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。工作树仍保留交接前已有的部署入口修改，UM982 手册已纳入资料归档提交。
 - 验证状态：`mower_coverage`/`mower_hardware` 构建成功，部署静态回归 6/6；CAN 离线回归及 `mower_hardware` `colcon test` 均为 12/12；全量 4 包构建通过。目标机 ARM64 修复镜像、入口 smoke、室内容器与端口/安全边界均通过。无线切换后 by-id 重新出现为 ttyUSB3，室外 Fix、容器 `/gps/fix`、8080/9090、无 `/cmd_vel` 发布者和 `SAVECONFIG response: OK` 均已验收。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
 - 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。实机 CAN、Mid-360/IMU 驱动尚未接入，CAN 必须先完成协议和安全审查。
