@@ -24,6 +24,11 @@
 - 目标机 Docker 拉取 `ros:humble-ros-base-jammy` 时访问 Docker Hub manifest 超时；尚未配置 registry mirror 或代理，不能把此次失败归因于 Dockerfile/ROS 依赖。
 - 目标机可达 DaoCloud registry 后，Dockerfile 增加 `ROS_BASE_IMAGE` 构建参数；实际 ARM64 构建使用 `docker.m.daocloud.io/library/ros:humble-ros-base-jammy`，默认官方镜像仍保留，镜像源属于部署环境配置。
 - allowlist `.dockerignore` 将硬件构建上下文从 `977.9MB` 降到 `135.9MB`；只保留 `mower_coverage`、`mower_hardware` 和 entrypoint，未改变最终镜像包内容。
+- ARM64 镜像首次真实启动暴露了入口脚本与 ROS setup 的兼容性偏差：`set -u` 使 `AMENT_TRACE_SETUP_FILES` 未初始化时直接退出；保守改为 `set -e -o pipefail`，保留失败即停且不改 ROS 官方 setup。
+- CAN 交接资料目前只有 V1.0 手册，没有 DBC、下位机源码或 `candump` 抓包；本轮以手册为唯一协议来源，只实现纯离线解析/回放，不推断未定义帧，也不接触 `can0/can1`。
+- 为让现有 ROS 包的 `python3 -m unittest -v` 发现离线用例，补充 `src/mower_hardware/test/__init__.py`；这是测试发现入口的最小兼容改动，不影响运行时包。
+- 初版 `candump` 解析曾接受任意宽度的十六进制 ID；按经典 CAN 11 位标准帧契约收紧为最多 3 个十六进制字符，并补充启动握手、超时和连续解锁键审计。
+- 本轮按指定 baseline 执行双轴 review：Spec 初审指出扩展帧样式 ID 和回放安全审计缺口，已修正；Standards 仅指出交接前已有的 `deploy/rk3588/entrypoint.sh` 及部署测试属于另一范围，按工作区保护规则保留未回滚。CAN 回归 12/12、`py_compile` 和 `git diff --check` 通过。
 
 # Discovered edge cases
 
@@ -85,6 +90,12 @@
 
 # Questions for review
 
+- 用户确认 Prolific USB-Serial 物理连接对象就是 UM982；此前“ttyUSB3 可能是电机控制板”的安全假设已失效，但仍需以只读 NMEA 证据确认端口配置。
+- 本轮尝试从当前 WSL SSH 到 `192.168.9.138` 时在沙箱 socket 层返回 `Operation not permitted`，尚未完成远程只读探测；没有向 UM982 写入任何字节。
+- 用户已补充《UM982_User_Manual.pdf》；手册确认 COM1/2/3 支持 9600、19200、38400、57600、115200、230400、460800、921600，数据格式为 8N1，`CONFIG` 可查询，`UNLOG` 可停止当前串口输出，`FRESET` 会恢复 115200 并重启，故不使用 FRESET。
+- 恢复专用 key 后重新枚举发现稳定链接为 `usb-Prolific...USB-Serial... -> /dev/ttyUSB0`，`/dev/ttyUSB3` 是 Android Modem；之前探测错设备。真正 ttyUSB0 按全部手册速率只读监听仍收到 0 字节，下一步需用不改配置的 `CONFIG` 查询验证是否被 UNLOG/上位机初始化阻断。
+- 在正确 `/dev/ttyUSB0`/115200 下，`CONFIG` 查询曾返回 `$CONFIG,COM3,CONFIG COM3 115200*23`，证明 Prolific、COM3、115200 和命令链路均可工作；随后 `GPGGA COM3 1` 曾产生 `$GNGGA,...*49`，直接证明此前是 NMEA LOG 未启用而非串口参数错误。
+- `UNILOGLIST` 未返回；随后 Prolific 在目标机内核日志中断开并重枚举，重枚举后的同一 `CONFIG` 查询暂时无响应，因此 GGA 恢复和端口状态尚未达到稳定验收条件，不能持久化配置或启动容器。
 - 已处理：`/scan` QoS、`body -> gps_link` frame 契约、PointCloud2 缺失 `time`、点云输入 remap、GPS 输出 remap，以及 navsat TF 等待窗口。
 - 后续性能专项仍需处理长时间高负载下 FAST-LIO `No Effective Points` / `No point, skip` 与由此造成的 EKF 阻塞；20 Hz 只解决 EKF 与 FAST-LIO 输入速率不匹配，完整长跑仍出现少量 update-rate failure，不能宣称性能专项完成。
 - 已处理：`sensor_full` 的 RViz2 车体闪烁。修复后 `/tf` 仅保留 EKF、FAST-LIO、robot_state_publisher 三个 publisher，`/tf_static` 仅一个 `map → odom`，四轮 frame pair 持续发布。
@@ -110,6 +121,19 @@
 - 三个 `/dev/serial/by-id/usb-Android_Android_0000-if02/03/04-port0` 设备的 UM982 端口角色尚未确认；需要保守地只读探测 NMEA，禁止同时让多个进程打开串口。
 - 目标机权限恢复后重新枚举：`ttyUSB0~2` 是 Quectel `2c7c:6002` 4G Modem 的 option 接口，`ttyUSB3` 是 Prolific `067b:23a3` USB-Serial；`ttyFIQ0` 是 Linux 调试控制台。对 ttyUSB3 的常见波特率只读探测均无 NMEA，物理线缆角色仍未确认。
 - 在确认 Prolific 线缆连接对象前，不得把 `/dev/ttyUSB3` 写入 `.env` 或启动 NMEA 驱动；若它连接电机控制板，读取/配置串口可能影响后续控制链。
+- Prolific 当前位于 RK3588 的 USB 5-1（OHCI、12M）；`power/control=on` 且 `runtime_status=active`，因此已排除 autosuspend 作为当前断开原因。最近一次断开仍需从线缆、接口或 USB 供电稳定性方向复核。
+- 固定时长串口探针在关闭 fd 的瞬间可能留下最后一条半行；组合监听中其余 `$GNRMC/$GNGGA/$G*GSV` 均带校验和，不能把探针边界的半行误判为 UM982 丢帧。
+- 运行态已恢复三类 LOG；用户已明确授权并完成 `SAVECONFIG`，返回 `response: OK`。若后续需要验证掉电保持，仍需单独安排受控重启。
+- ROS Humble 的 `/opt/ros/humble/setup.bash` 及其下级 setup 脚本不是 nounset-safe；部署入口不能对它们启用 `set -u`，否则在启动任何业务节点前就会退出。
+- 从有线切换到无线并移动设备后，Prolific 曾断开并重新枚举为 `ttyUSB3`；Compose 因原 by-id 暂时不存在退出，重新枚举后 by-id 仍保持稳定映射，证明不能依赖 ttyUSB 编号。
+- 室外开阔处首次采样已得到有效 Fix：RMC 状态 `A`、GGA fix quality `1`、17 颗卫星、HDOP `1.1`；坐标约 `23.39635010N,113.16144748E`、海拔 `30.7569m`。
+- CAN 协议资料请放入 `docs/hardware/can/`；优先提供 DBC/协议手册/下位机源码/已有上位机 CAN 代码，以及安全的 `candump -L` 原始抓包。资料不完整时只能做离线解码，不能猜测帧 ID、字节序、缩放或控制含义。
+- CAN 的物理写入可能触发电机动作，属于需人工复核的范围变更；在确认总线速率、帧格式、心跳/计数器/校验、看门狗、急停和超时默认动作前，不启动 `can0/can1`，不发送控制帧，不接入规划器。
+- 下一阶段引入 CAN 属于新的物理控制范围：当前 `rtk_readonly` profile 不启用 `can0/can1`、不发送 CAN 帧、不接管 `/cmd_vel`；在协议和安全机制未确认前保持该边界。
+- 若伙伴方案与本方案同时运行，两个系统不能同时打开同一 CAN 接口或同一电机控制通道；即使 Docker 镜像不同，也可能因接口、端口、ROS_DOMAIN_ID、`/cmd_vel` 或容器名冲突而互相影响。
+- 手册明确 `0x005` 没有 CRC、序列号或应用层 ACK，且 `0x507` 不含故障码/锁定原因；离线解码只能验证字段格式和回放时序，不能证明现场控制安全或命令已执行。
+- 经典 CAN 的 `candump -L` 解析不能只看数值 ID；4 位以上的 ID 可能是扩展帧样式，即使数值恰好落在 `0x7FF` 内也必须拒绝。
+- `0x507` 没有碰撞、急停、遥控器接管或锁定原因字段；离线审计可验证启动/超时/解锁键等可观测契约，但不能从当前协议判断这些物理事件。
 
 # Verification evidence
 
@@ -163,22 +187,33 @@
 - 首次 ARM64 构建证据：源码同步成功；Docker 发送 `1.113GB` 上下文后在拉取 Docker Hub 基础镜像阶段因网络超时退出，未创建目标镜像或启动容器。
 - 目标机 ARM64 构建证据：DaoCloud 基础镜像拉取成功（digest `sha256:afb40d6be65331c20a114d4e229a7ef099fed1b17bf6370daee193514b32aa16`）；收紧上下文后 `135.9MB` 原生构建成功，镜像 `mower-rk3588:humble-rtk` 为 `arm64/linux`。
 - 目标机容器 smoke 证据：无网络、无设备的临时容器中可枚举 `mower_coverage`、`mower_hardware`、`nmea_navsat_driver` 和 `rosbridge_server`，`rtk_readonly.launch.py --show-args` 通过；Compose config 通过，未创建 `mower-rkt`。
+- 目标机串口复验：by-id 稳定指向 `/dev/ttyUSB0`，无进程占用；115200/8N1 下 `CONFIG` 返回 UM982 配置响应，`GPGGA/GPRMC/GPGSV COM3 1` 均返回 ACK。随后无发送监听 12 秒收到 2 条 GGA、2 条 RMC、6 条 GSV，室内状态为无 Fix；测试期间无新增 USB 断开。
+- ARM64 部署回归：旧镜像直接运行入口稳定失败于 `AMENT_TRACE_SETUP_FILES: unbound variable`；同镜像关闭 nounset 的对照通过，源码回归 6/6 通过，修复后的镜像需重新构建后再做容器与 ROS 话题验收。
+- 修复后 ARM64 运行态：入口 smoke 通过，`mower-rkt` 重建后持续 `running` 且重启次数为 0；NMEA 驱动连接 `/dev/um982` @ 115200，`/gps/fix` 发布频率约 1 Hz，室内消息为 `status=-1`/NaN 坐标，8080 返回 HTTP 200、9090 端口可达，`/cmd_vel` 无发布者。
+- 无线/室外复验：目标机 `wlan0=192.168.10.77`；Prolific 重新枚举为 `/dev/ttyUSB3`，恢复三类 LOG 后收到有效 `$GNRMC`/`$GNGGA`/`$G*GSV`。清空输入缓冲后 `SAVECONFIG` 明确返回 `response: OK`，随后约 12 秒收到 20 条 GGA、20 条 RMC、471 条 GSV。
+- CAN 协议回归证据：协议矩阵、纯离线解码和 `candump -L` 回放审计共 12 项测试通过；`mower_hardware` 的 `colcon test` 发现并通过全部 12 项，安装后反馈样例可导入解码。
+- 本轮构建证据：`colcon build --symlink-install` 全量 4 包通过；`git diff --check` 和 Python 语法检查通过。未启动 `can0/can1`，未发送帧，未接入 `/cmd_vel`。
 
 # Summary
 
-- Deviations count: 21（含本轮实机 Docker/RTK 部署骨架、标准 NMEA 驱动入口、GNSS 状态显示修正、目标机 Docker 缺失盘点和 registry/context 适配）。
-- Most likely revisit: UM982 实际 NMEA 输出与 ARM64 `nmea_navsat_driver` 可用性；需目标机原始串口证据，不能凭型号或截图猜测。
-- Edge cases found: 48（新增 Docker 缺失、串口稳定路径、NavSatStatus 语义、ROS 日志目录限制、三串口角色不明和 registry/context 限制）。
-- Verification status: 新增部署静态回归 5/5、`mower_coverage`/`mower_hardware` 构建、目标机 ARM64 镜像构建/容器 smoke 和 Compose config 通过；独立测试 23/24，唯一失败为沙箱 socket 限制；UM982 `/gps/fix` 运行态尚未验证。
-- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；优先确认 Prolific ttyUSB3 的物理连接对象，再进行 UM982 NMEA 和只读容器验收。
+- Deviations count: 24（含本轮实机 Docker/RTK 部署骨架、标准 NMEA 驱动入口、GNSS 状态显示修正、目标机 Docker 缺失盘点、registry/context 适配、ROS setup 兼容修复和 CAN 离线测试入口适配）。
+- Most likely revisit: 下位机 CAN 协议与控制权归属尚未确认；需要在伙伴方案、总线接口和电机安全机制之间做明确 owner 决策，不能仅凭帧样本猜测控制协议。
+- Edge cases found: 60（新增 CAN 物理写入风险、双方案资源冲突、经典/扩展帧 ID 表示和协议缺少物理安全事件字段；既有无线 USB 重新枚举、by-id 漂移、COM3 无周期 LOG、USB 重枚举仍需保留）。
+- Verification status: RTK 115200/8N1、室外 Fix、容器 `/gps/fix`、Web 和安全边界已验收；CAN 仅完成离线矩阵/解码/回放审计，`can0/can1` 未启用、未发送控制帧、未接入规划器。
+- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；若收到 DBC、下位机源码或 `candump -L`，先用现有审计做离线回放对照，再讨论任何现场 CAN 操作授权。
 
 ## Active Handoff（当前交接进度）
 
-- 当前进度：已新增独立 `mower_hardware` 包、`rtk_readonly.launch.py`、RK3588 ARM64 Docker/Compose 部署骨架，并修正 WebSocket 远程主机地址和 GNSS 状态误标；不启动仿真、规划器、执行器、CAN 或电机。
-- 当前提交：`f0d0955 Support ARM64 registry mirror deployment`；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
-- 验证状态：`mower_coverage`/`mower_hardware` 构建成功，部署静态回归 5/5，目标机 ARM64 镜像构建、无设备容器 smoke 和 Compose config 通过；独立测试 23/24，唯一失败是沙箱 TCP socket 权限限制。UM982 NMEA、`/gps/fix`、Web 浏览器和运行容器验收尚未执行。
+- 当前进度：已新增独立 `mower_hardware` 包、`rtk_readonly.launch.py`、RK3588 ARM64 Docker/Compose 部署骨架、CAN 协议矩阵和纯离线 `0x005/0x507` 解码/回放审计；不启动仿真、规划器、执行器、SocketCAN 或电机。
+- 当前提交：`faad61a Record RK3588 ARM64 build evidence`；CAN 矩阵/解码/测试及交接笔记仍在工作树，当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。
+- 验证状态：`mower_coverage`/`mower_hardware` 构建成功，部署静态回归 6/6；CAN 离线回归及 `mower_hardware` `colcon test` 均为 12/12；全量 4 包构建通过。目标机 ARM64 修复镜像、入口 smoke、室内容器与端口/安全边界均通过。无线切换后 by-id 重新出现为 ttyUSB3，室外 Fix、容器 `/gps/fix`、8080/9090、无 `/cmd_vel` 发布者和 `SAVECONFIG response: OK` 均已验收。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
-- 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。实机侧尚无 CAN、Mid-360/IMU 驱动，第一阶段只允许 UM982 只读。
+- 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。实机 CAN、Mid-360/IMU 驱动尚未接入，CAN 必须先完成协议和安全审查。
 - 本次实现：`hill_full` 默认关闭 `/odom→TF` 中继，`hill_ekf` 删除重复 `map→odom`、改为 `odom→camera_init`、配置仿真 GPS datum，并将仿真 EKF 频率从 30 Hz 调整为 20 Hz；`hill_sim/web_minimal` 默认中继行为保留。`multi_area_definer` 先校验整批 Web payload，再原子替换任务状态，非法批次保留旧任务。
-- 当前会话进度（实时）：key-based SSH、Docker/Compose、dialout、目标机 ARM64 镜像构建和无设备 smoke 已完成；目标机已确认 Ubuntu 22.04.5 ARM64、有线 IP `192.168.9.138`、Quectel 4G Modem 三串口、Prolific ttyUSB3 和 DOWN 状态 CAN，但 UM982 物理连接/端口尚未确认。
-- 下一步：确认 Prolific 线缆连接对象和 UM982 输出；只有确定稳定设备路径/波特率并读到 NMEA 后，才生成 `.env`、启动 `mower-rkt`，再验收 `/gps/fix`、Web `8080/9090` 和 `/cmd_vel` 无发布者。
+- 本轮 CAN 实现：新增 `docs/hardware/can/协议矩阵.md`、`mower_hardware.can_protocol` 和 12 项标准库回归；只解析经典 11 位 `0x005/0x507`，支持带时间戳的 `candump -L` 回放审计，不打开 SocketCAN、不发送帧、不接入 `/cmd_vel`。
+- 当前会话进度（实时）：无线地址为 `192.168.10.77`；移动后 Prolific 从 ttyUSB0 重新枚举为 ttyUSB3，旧容器因设备短暂消失退出，当前 by-id 已恢复且无占用。室外原始 NMEA 已确认 RMC `A`、GGA fix `1`，最高样本 23 颗卫星、HDOP `0.6`。
+- 当前会话进度（实时）：用户已授权 `SAVECONFIG`，清空输入后收到 `$command,SAVECONFIG,response: OK*55`；随后真实时间监听约 12 秒收到 20 条 GGA、20 条 RMC、471 条 GSV。
+- 当前会话进度（实时）：`mower-rkt` 已按 by-id 重新启动并稳定 0 次重启；室外 `/gps/fix` 有效坐标约 `23.39636759,113.16145711`、频率约 1 Hz、status=0；8080=200、9090 可达、`/cmd_vel` 无发布者。
+- 当前会话决策（实时）：下一阶段可以接收并阅读下位机 CAN 协议资料，但只做离线协议解析/帧回放；不启用 `can0/can1`，不发送帧，不启动伙伴的另一套控制方案。
+- 当前会话审查结论（实时）：Spec 初审发现扩展帧样式 ID 未拒绝、回放未审计启动/超时/连续解锁键，已补齐并以 12 项回归覆盖；Standards 发现的部署入口修改属于交接前已有改动，保留但不归入 CAN 交付范围。
+- 下一步：等待 DBC、下位机源码或真实 `candump -L` 抓包；先做离线字段/时序对照，重点确认无 CRC/ACK 下的产品错误提示和 CAN 控制权 owner。实际电机动作仍需另行明确授权。
