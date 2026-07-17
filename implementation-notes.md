@@ -207,7 +207,7 @@
 ## Active Handoff（当前交接进度）
 
 - 当前进度：已新增独立 `mower_hardware` 包、`rtk_readonly.launch.py`、RK3588 ARM64 Docker/Compose 部署骨架、CAN 协议矩阵和纯离线 `0x005/0x507` 解码/回放审计；不启动仿真、规划器、执行器、SocketCAN 或电机。
-- 当前提交：`9f6eb1a Update CAN handoff status`；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。工作树仍保留交接前已有的部署入口修改，UM982 手册已纳入资料归档提交。
+- 当前提交：`f270eb5 Archive UM982 user manual`；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。工作树仍保留交接前已有的部署入口修改。
 - 验证状态：`mower_coverage`/`mower_hardware` 构建成功，部署静态回归 6/6；CAN 离线回归及 `mower_hardware` `colcon test` 均为 12/12；全量 4 包构建通过。目标机 ARM64 修复镜像、入口 smoke、室内容器与端口/安全边界均通过。无线切换后 by-id 重新出现为 ttyUSB3，室外 Fix、容器 `/gps/fix`、8080/9090、无 `/cmd_vel` 发布者和 `SAVECONFIG response: OK` 均已验收。
 - 保留状态：附加 worktree 位于 `/home/yh/mower_ws-worktrees/`，历史生成物位于 `/home/yh/mower_ws-archive/2026-07-13/`。
 - 已知问题：完整高负载长跑仍可能出现 FAST-LIO `lidar loop back, clear buffer`、`No Effective Points`/`No point, skip` 和 EKF update-rate failure；本轮只解决 safe 的坡面误停车与 scan fail-open，不宣称点云时间回退/CPU 性能专项完成。实机 CAN、Mid-360/IMU 驱动尚未接入，CAN 必须先完成协议和安全审查。
