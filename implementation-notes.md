@@ -277,6 +277,7 @@
 ## Active Handoff（当前交接进度）
 
 - 当前教学交付：已建立 `MISSION.md`、RTK 领导演示 lesson、现场速查表、300 秒静态验收结果卡和学习记录；演示只启动 `mower_rtk` 只读 profile，不启动 CAN、规划器、执行器、电机或 `/cmd_vel`。为避免把 CORS 密码打印到终端，教学命令统一使用 `docker compose config -q`。
+- 发布状态：提交 `e14b76f` 已推送到 `origin/fix/web-launch-obstacle-planning`；工作树在推送时干净。按当前请求仅完成分支推送，未创建 Draft PR。
 - 当前状态：Fixed-only 统计、单串口 `rtk_ntrip_node`、CORS 断流/恢复、容器重启和物理 USB 重新枚举均已完成；未启动 CAN、规划器、执行器或 `/cmd_vel`。
 - 最新 300 秒静态结果：RTCM `273681` 字节，300/300 条 GGA 为 RTK Fixed，首次 Fixed `0.7s`；Fixed-only 标准差 east `0.008m`、north `0.010m`、radial `0.008m`，最长连续 Fixed `299.0s`；相对首个 Fixed 最大偏差 `0.112m`，对外口径为厘米量级静态重复性。
 - CORS 断流策略：RTCM 超过 15 秒未更新即 `corrections_fresh=false`、`global_position_trusted=false`；解除临时规则后节点自动重连并恢复 `RTK_FIXED` 和可信全局定位。
