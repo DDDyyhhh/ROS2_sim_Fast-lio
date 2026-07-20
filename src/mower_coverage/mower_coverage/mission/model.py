@@ -235,7 +235,10 @@ def validate_mission(mission, profile):
     order = mission.get('order', [])
     if not isinstance(order, list):
         issues.append('mission order must be a list')
-    elif order and (
+    elif not order and executable_ids:
+        issues.append(
+            'mission order must contain every executable object exactly once')
+    elif (
         any(not isinstance(item, str) for item in order)
         or len(order) != len(set(order))
         or set(order) != executable_ids
@@ -277,6 +280,7 @@ def legacy_areas_to_mission(legacy_yaml):
                 'status': 'confirmed',
                 'geometry': points,
                 'source': 'legacy',
+                'color': entry.get('color', [1.0, 0.0, 0.0]),
             })
         else:
             add_object({
@@ -287,6 +291,7 @@ def legacy_areas_to_mission(legacy_yaml):
                 'source': 'legacy',
                 'cutting_angle': float(entry.get('cutting_angle', 0.0)),
                 'max_speed': max_speed,
+                'color': entry.get('color', [0.0, 1.0, 0.0]),
             })
             order.append(name)
 
@@ -297,6 +302,7 @@ def legacy_areas_to_mission(legacy_yaml):
                 'status': 'confirmed',
                 'geometry': ring,
                 'source': 'legacy',
+                'color': [1.0, 0.0, 0.0],
             })
 
     return {'objects': objects, 'order': order}

@@ -19,7 +19,6 @@ import math
 import json
 import os
 import rclpy
-import yaml
 from rclpy.node import Node
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import Point, Pose, PoseStamped, PoseArray, Quaternion
@@ -32,6 +31,10 @@ from shapely.ops import unary_union
 import numpy as np
 
 from mower_coverage.state_paths import readable_path, state_file
+from mower_coverage.mission.loader import (
+    load_mission_file,
+    mission_to_legacy_areas,
+)
 
 
 def polyline_to_path(waypoints, frame_id, stamp):
@@ -462,11 +465,8 @@ class HillBoustrophedon(Node):
             return resp
 
         try:
-            import yaml
-            with open(area_file, 'r') as f:
-                data = yaml.safe_load(f)
-
-            if not data or 'areas' not in data or not data['areas']:
+            data = mission_to_legacy_areas(load_mission_file(area_file))
+            if not data['areas']:
                 resp.success = False
                 resp.message = 'YAML 文件中没有区域数据'
                 return resp

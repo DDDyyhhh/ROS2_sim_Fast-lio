@@ -38,6 +38,7 @@ from shape_msgs.msg import Mesh
 from shapely.geometry import Polygon, Point as ShapelyPoint
 
 from mower_coverage.state_paths import ensure_parent, readable_path, state_file
+from .loader import load_mission_file, mission_to_legacy_areas
 
 
 class MultiAreaDefiner(Node):
@@ -528,13 +529,7 @@ class MultiAreaDefiner(Node):
             return resp
 
         try:
-            with open(load_file, 'r') as f:
-                data = yaml.safe_load(f)
-
-            if not data or 'areas' not in data:
-                resp.success = False
-                resp.message = 'YAML 格式错误: 缺少 areas 字段'
-                return resp
+            data = mission_to_legacy_areas(load_mission_file(load_file))
 
             loaded = 0
             for entry in data['areas']:

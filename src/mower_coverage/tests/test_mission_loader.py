@@ -4,11 +4,27 @@
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+
+import yaml
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from mower_coverage.mission.loader import load_mission_data, load_mission_file
+from mower_coverage.mission.loader import (
+    load_mission_data,
+    load_mission_file,
+    mission_to_legacy_areas,
+)
+from mower_coverage.mission.multi_area_definer import MultiAreaDefiner
+
+
+class _Logger:
+    def error(self, _message):
+        pass
+
+    def info(self, _message):
+        pass
 
 
 class MissionLoaderTests(unittest.TestCase):
@@ -82,6 +98,102 @@ class MissionLoaderTests(unittest.TestCase):
     def test_unknown_yaml_shape_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'objects or areas'):
             load_mission_data({'version': 1})
+
+    def test_legacy_adapter_keeps_global_no_go_constraints_for_old_consumers(self):
+        mission = {
+            'objects': [
+                {
+                    'id': 'area-1',
+                    'type': 'work_area',
+                    'status': 'confirmed',
+                    'geometry': [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0],
+                                 [0.0, 4.0], [0.0, 0.0]],
+                },
+                {
+                    'id': 'area-2',
+                    'type': 'work_area',
+                    'status': 'confirmed',
+                    'geometry': [[5.0, 0.0], [9.0, 0.0], [9.0, 4.0],
+                                 [5.0, 4.0], [5.0, 0.0]],
+                },
+                {
+                    'id': 'pond',
+                    'type': 'no_go_zone',
+                    'status': 'confirmed',
+                    'geometry': [[3.0, 1.0], [6.0, 1.0], [6.0, 2.0],
+                                 [3.0, 2.0], [3.0, 1.0]],
+                },
+            ],
+            'order': ['area-1', 'area-2'],
+        }
+
+        legacy = mission_to_legacy_areas(mission)
+
+        self.assertEqual(
+            [entry['name'] for entry in legacy['areas']],
+            ['area-1', 'area-2'],
+        )
+        self.assertEqual(
+            legacy['areas'][0]['inner_rings'],
+            [mission['objects'][2]['geometry']],
+        )
+        self.assertEqual(
+            legacy['areas'][1]['inner_rings'],
+            [mission['objects'][2]['geometry']],
+        )
+
+    def test_legacy_adapter_rejects_corridors_instead_of_dropping_them(self):
+        mission = {
+            'objects': [{
+                'id': 'corridor-1',
+                'type': 'corridor',
+                'status': 'confirmed',
+                'geometry': [[0.0, 0.0], [4.0, 0.0]],
+            }],
+            'order': ['corridor-1'],
+        }
+
+        with self.assertRaisesRegex(ValueError, 'corridor'):
+            mission_to_legacy_areas(mission)
+
+    def test_multi_area_loader_accepts_new_mission_documents(self):
+        mission = {
+            'objects': [
+                {
+                    'id': 'area-1',
+                    'type': 'work_area',
+                    'status': 'confirmed',
+                    'geometry': [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0],
+                                 [0.0, 4.0], [0.0, 0.0]],
+                },
+                {
+                    'id': 'pond',
+                    'type': 'no_go_zone',
+                    'status': 'confirmed',
+                    'geometry': [[1.0, 1.0], [2.0, 1.0], [2.0, 2.0],
+                                 [1.0, 2.0], [1.0, 1.0]],
+                },
+            ],
+            'order': ['area-1'],
+        }
+        node = object.__new__(MultiAreaDefiner)
+        node.area_file = None
+        node.areas = {}
+        node.next_color_idx = 0
+        node.get_logger = lambda: _Logger()
+        node.publish_visualization = lambda: None
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml',
+                                         encoding='utf-8') as stream:
+            yaml.safe_dump(mission, stream, allow_unicode=True)
+            stream.flush()
+            node.area_file = stream.name
+            response = SimpleNamespace(success=False, message='')
+            node.load_cb(None, response)
+
+        self.assertTrue(response.success)
+        self.assertEqual(list(node.areas), ['area-1'])
+        self.assertEqual(len(node.areas['area-1']['inner_rings']), 1)
 
 
 if __name__ == '__main__':

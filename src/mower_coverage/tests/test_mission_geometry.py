@@ -273,6 +273,26 @@ class MissionGeometryTests(unittest.TestCase):
         self.assertTrue(any('mission order' in issue
                             for issue in result.issues))
 
+    def test_executable_mission_requires_a_non_empty_order(self):
+        mission = {
+            'objects': [{
+                'id': 'area-1',
+                'type': 'work_area',
+                'status': 'confirmed',
+                'geometry': [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0],
+                             [0.0, 3.0], [0.0, 0.0]],
+            }],
+        }
+
+        result = validate_mission(
+            mission,
+            {'robot_length': 0.46, 'robot_width': 0.40, 'safety_margin': 0.2},
+        )
+
+        self.assertFalse(result.valid)
+        self.assertTrue(any('mission order' in issue
+                            for issue in result.issues))
+
     def test_overlapping_work_areas_are_rejected(self):
         mission = {
             'objects': [
@@ -576,6 +596,7 @@ class MissionGeometryTests(unittest.TestCase):
         self.assertEqual(mission['order'], ['front_lawn'])
         self.assertEqual(mission['objects'][0]['cutting_angle'], 0.3)
         self.assertEqual(mission['objects'][0]['max_speed'], 0.8)
+        self.assertEqual(mission['objects'][0]['color'], [0.0, 1.0, 0.0])
 
         result = validate_mission(
             mission,

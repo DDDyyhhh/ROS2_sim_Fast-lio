@@ -15,21 +15,27 @@ class CaptureSession:
     """Capture, review and confirm exactly one mission object."""
 
     def __init__(self, object_id, object_type, geometry_profile,
-                 frame_id='map'):
+                 frame_id='map', allow_local_odom=False):
         if not isinstance(object_id, str) or not object_id:
             raise ValueError('object id is required')
         if object_type not in _OBJECT_TYPES:
             raise ValueError(f'unknown object type: {object_type}')
         if not isinstance(frame_id, str) or not frame_id:
             raise ValueError('frame_id is required')
+        if frame_id != 'map' and not (
+                allow_local_odom and frame_id == 'odom'):
+            raise ValueError(
+                'local odom capture requires explicit simulation fallback')
 
         self.object_id = object_id
         self.object_type = object_type
         self.geometry_profile = deepcopy(geometry_profile)
         self.frame_id = frame_id
+        self.allow_local_odom = allow_local_odom
         self.state = 'idle'
         self._raw_trajectory = []
         self._result = None
+        self._corridor_metadata = {}
 
     def start(self):
         """Start collecting samples for this one object."""
@@ -92,8 +98,39 @@ class CaptureSession:
         """Promote a geometrically ready capture to a confirmed object."""
         if self.state != 'ready':
             raise RuntimeError('capture can be confirmed only when ready')
+        if self.object_type == 'corridor' and not self._corridor_metadata:
+            raise RuntimeError('corridor metadata is required before confirmation')
         self.state = 'confirmed'
         return self._mission_object('confirmed')
+
+    def set_corridor_metadata(self, width, from_work_area_id,
+                              to_work_area_id, bidirectional):
+        """Set the fields the legacy geometry cannot infer from a centerline."""
+        if self.object_type != 'corridor':
+            raise RuntimeError('only corridors have route metadata')
+        if self.state not in _CAPTURE_EDITABLE_STATES:
+            raise RuntimeError('capture session cannot be edited')
+        if (isinstance(width, bool)
+                or not isinstance(width, (int, float))
+                or not isfinite(width)
+                or width <= 0.0):
+            raise ValueError('corridor width must be finite and positive')
+        if (not isinstance(from_work_area_id, str)
+                or not from_work_area_id
+                or not isinstance(to_work_area_id, str)
+                or not to_work_area_id
+                or from_work_area_id == to_work_area_id):
+            raise ValueError('corridor endpoints must be two work areas')
+        if not isinstance(bidirectional, bool):
+            raise ValueError('corridor bidirectional must be boolean')
+
+        self._corridor_metadata = {
+            'width': float(width),
+            'from_work_area_id': from_work_area_id,
+            'to_work_area_id': to_work_area_id,
+            'bidirectional': bidirectional,
+        }
+        return self.snapshot()
 
     def snapshot(self):
         """Return the current UI/persistence-neutral session snapshot."""
@@ -107,11 +144,12 @@ class CaptureSession:
             'raw_trajectory': deepcopy(self._raw_trajectory),
             'geometry': [list(point) for point in geometry],
             'issues': list(issues),
+            'corridor_metadata': deepcopy(self._corridor_metadata),
         }
 
     def _mission_object(self, status):
         snapshot = self.snapshot()
-        return {
+        result = {
             'id': self.object_id,
             'type': self.object_type,
             'status': status,
@@ -121,6 +159,9 @@ class CaptureSession:
             'source': 'remote_capture',
             'issues': snapshot['issues'],
         }
+        if self.object_type == 'corridor':
+            result.update(deepcopy(self._corridor_metadata))
+        return result
 
     def _normalize_sample(self, sample):
         if not isinstance(sample, dict):

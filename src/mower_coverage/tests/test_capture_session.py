@@ -91,6 +91,29 @@ class CaptureSessionTests(unittest.TestCase):
             _sample(0.0, 0.0, 1.0),
         ])
 
+    def test_corridor_confirmation_requires_and_persists_route_metadata(self):
+        session = CaptureSession('corridor-1', 'corridor', PROFILE)
+        session.start()
+        session.record_pose(_sample(0.0, 0.0, 1.0))
+        session.record_pose(_sample(5.0, 0.0, 2.0))
+        session.finish()
+
+        with self.assertRaisesRegex(RuntimeError, 'metadata'):
+            session.confirm()
+
+        with self.assertRaisesRegex(ValueError, 'width'):
+            session.set_corridor_metadata(
+                0.0, 'area-1', 'area-2', bidirectional=True)
+
+        session.set_corridor_metadata(
+            1.0, 'area-1', 'area-2', bidirectional=True)
+        confirmed = session.confirm()
+
+        self.assertEqual(confirmed['width'], 1.0)
+        self.assertEqual(confirmed['from_work_area_id'], 'area-1')
+        self.assertEqual(confirmed['to_work_area_id'], 'area-2')
+        self.assertTrue(confirmed['bidirectional'])
+
     def test_state_and_sample_contracts_fail_closed(self):
         session = CaptureSession('area-1', 'work_area', PROFILE)
         with self.assertRaisesRegex(RuntimeError, 'not capturing'):
@@ -107,6 +130,24 @@ class CaptureSessionTests(unittest.TestCase):
                 'frame_id': 'odom',
                 'localization_ok': True,
             })
+
+    def test_local_odom_requires_an_explicit_simulation_fallback(self):
+        with self.assertRaisesRegex(ValueError, 'simulation'):
+            CaptureSession(
+                'area-1', 'work_area', PROFILE, frame_id='odom')
+
+        session = CaptureSession(
+            'area-1', 'work_area', PROFILE,
+            frame_id='odom', allow_local_odom=True)
+        session.start()
+        session.record_pose({
+            'x': 0.0,
+            'y': 0.0,
+            'timestamp': 1.0,
+            'frame_id': 'odom',
+            'localization_ok': True,
+        })
+        self.assertEqual(len(session.snapshot()['raw_trajectory']), 1)
 
     def test_confirmation_is_not_available_before_finish_or_after_cancel(self):
         session = CaptureSession('area-1', 'work_area', PROFILE)

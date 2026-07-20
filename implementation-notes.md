@@ -37,7 +37,7 @@
 - 真实 CORS 断流测试发现 TCP socket 仍为 `ESTAB` 但 RTCM 字节停止增长；因此补充 15 秒 RTCM 数据新鲜度超时，断流时 fail-closed 并自动重连，不能仅信任 socket 状态。
 - 任务模型计划只要求通道宽度容纳机器人包络和安全余量，未规定计算公式；本轮采用可逆的保守规则 `max(robot_length, robot_width) + 2 × safety_margin`，若后续引入转弯姿态/非矩形包络再调整。
 - 缺少真实机器人包络 profile 时，模型校验直接 fail-closed；不把仿真 `0.46m × 0.40m` 尺寸或旧规划器 `0.3m` 障碍膨胀值冒充实机默认值。
-- 旧 ROS 区域链不能无损表达全局禁区和连接通道；本轮新增单向 `load_mission_file()` 归一化旧/新 YAML，但暂不把新模型反向接入旧 `MultiAreaDefiner`/规划器，避免丢通道或改变旧障碍语义。待三类对象的规划消费边界明确后再接线，当前决定可逆。
+- 旧 ROS 区域链不能无损表达全局禁区和连接通道；先新增单向 `load_mission_file()`，审查后补充显式 `mission_to_legacy_areas()` 适配并接入多区域 loader/规划器。它把全局禁区挂到每个旧作业区，遇到 corridor 直接拒绝，避免丢通道或静默改变语义。
 - 定位健康计划没有给出新鲜度/跳变/协方差数值阈值；本轮先实现无 ROS 的信号组合门禁，阈值和话题采样适配留在配置化监测节点，不猜仿真或实机默认值。
 
 # Discovered edge cases
@@ -216,6 +216,8 @@
 - 本轮新回归：`test_mission_loader.py` 4 项、`test_localization_health.py` 6 项、`test_capture_session.py` 5 项，以及模型异常输入 5 项全部通过；模型测试总数从 17 增至 22。
 - 本轮包级验证：`python3 -m pytest -q src/mower_coverage/tests` 为 61 passed、1 failed；唯一失败是沙箱禁止创建 TCP socket 的既有 `test_web_server.py`，新增测试和其余既有测试均通过。
 - 本轮构建/静态检查：`colcon build --symlink-install --packages-select mower_coverage` 成功；新增 Python 文件 `py_compile` 通过，`git diff --check` 通过；未启动 ROS/Gazebo、Web ROS 连接、规划器、执行器、CAN 或任何运动控制。
+- 审查后增量验证：旧/新 YAML loader 7 项、模型 23 项、capture 7 项、health 6 项全部通过；包级总计 68 项中 67 passed，唯一失败仍是沙箱 socket 权限；规划器/定义器接线、`py_compile`、`git diff --check` 和 mower_coverage 构建通过。
+- 审查修复范围：补上可执行对象的 order 门禁、旧消费者显式适配、corridor 元数据确认门禁和显式仿真 odom fallback；外边界/禁区补偿与真实 profile 尚未实现，避免猜测实机参数。
 - 新参数真实短跑：无 FAST-LIO/EKF 的 hill profile 启动成功，真实 `/scan` 发布中位约 `18.9 Hz`（8 秒观测窗口），实例已自动退出且未留下重复进程；该证据只覆盖转换发布率，不等同于完整 Web safe A/B。
 - 真实坡面无障碍过滤探针（最终 32-cell/2cm-span 配置）：约 8 秒收到 161 帧，前方 ±30° 有效点 `0`、`<0.8m` 命中 `0`；实例正常清理。该证据覆盖地面误报，不覆盖真实障碍物回波。
 - 本轮审查前版本真实路径 safe 绿灯：同一 Web 区域规划 `28002` 点、执行器收到 `3852` 点；35 秒内 `/cmd_vel` 前进 `305`、倒车 `0`、停止 `16`，`/scan` 前方有效命中 `0`，原始 `/odom` 从约 `(-25.77,15.46)` 到 `(2.15,15.83)`；该证据不替代当前阈值/门禁版本复验。
@@ -263,10 +265,10 @@
 
 # Summary
 
-- Deviations count: 30（在历史 28 项基础上新增旧链单向兼容边界，以及定位健康阈值暂不猜默认值）。
+- Deviations count: 31（在历史 30 项基础上新增旧消费者适配对 corridor 的明确拒绝；定位健康阈值仍不猜默认值）。
 - Most likely revisit: 下位机 CAN 协议与控制权归属尚未确认；需要在伙伴方案、总线接口和电机安全机制之间做明确 owner 决策，不能仅凭帧样本猜测控制协议。
-- Edge cases found: 78（在历史 74 项基础上新增 YAML 歧义、非法 order、健康信号缺失/类型错误和单对象采集确认门禁）。
-- Verification status: 新增 loader/定位健康/单对象采集纯 Python 核心及 22 项模型回归通过；mower_coverage 本轮 62 项中 61 项通过，唯一失败为沙箱 socket 权限；包构建成功，未启用 CAN 或运动控制。
+- Edge cases found: 80（在历史 78 项基础上新增 corridor 元数据缺失和未显式授权的局部 odom frame）。
+- Verification status: 新增 loader/定位健康/单对象采集纯 Python 核心及 23 项模型回归通过；mower_coverage 本轮 68 项中 67 项通过，唯一失败为沙箱 socket 权限；包构建成功，未启用 CAN 或运动控制。
 - Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；若收到 DBC、下位机源码或 `candump -L`，先用现有审计做离线回放对照，再讨论任何现场 CAN 操作授权。
 
 ## Historical Handoff（历史交接记录）
@@ -307,7 +309,7 @@
 - 当前教学交付：已建立 `MISSION.md`、RTK 领导演示 lesson、现场速查表、300 秒静态验收结果卡和学习记录；演示只启动 `mower_rtk` 只读 profile，不启动 CAN、规划器、执行器、电机或 `/cmd_vel`。为避免把 CORS 密码打印到终端，教学命令统一使用 `docker compose config -q`。
 - 发布状态：提交 `e14b76f` 已推送到 `origin/fix/web-launch-obstacle-planning`；工作树在推送时干净。按当前请求仅完成分支推送，未创建 Draft PR。
 - 当前状态：Fixed-only 统计、单串口 `rtk_ntrip_node`、CORS 断流/恢复、容器重启和物理 USB 重新枚举均已完成；未启动 CAN、规划器、执行器或 `/cmd_vel`。
-- 本轮提交：`77886aa Add mission capture and localization safety core`；已包含 `CONTEXT.md`、纯任务模型/loader/capture、定位健康评估和对应回归。当前未推送新提交，工作树在提交后干净。
+- 本轮最终提交：`f1767de Harden mission compatibility boundaries`（前置核心提交 `812eb10`）；已包含 `CONTEXT.md`、纯任务模型/loader/capture、定位健康评估和对应回归。当前未推送新提交，工作树干净。
 - 最新 300 秒静态结果：RTCM `273681` 字节，300/300 条 GGA 为 RTK Fixed，首次 Fixed `0.7s`；Fixed-only 标准差 east `0.008m`、north `0.010m`、radial `0.008m`，最长连续 Fixed `299.0s`；相对首个 Fixed 最大偏差 `0.112m`，对外口径为厘米量级静态重复性。
 - CORS 断流策略：RTCM 超过 15 秒未更新即 `corrections_fresh=false`、`global_position_trusted=false`；解除临时规则后节点自动重连并恢复 `RTK_FIXED` 和可信全局定位。
 - USB 重新枚举结果：Prolific by-id 恢复并指向 `/dev/ttyUSB0`；节点日志经历 `SERIAL_UNAVAILABLE → NO_FIX → SINGLE → DGPS → RTK_FIXED`，容器 `RestartCount=0`，最终状态 `corrections_fresh=true`、`global_position_trusted=true`、`invalid_gga=0`。
@@ -319,10 +321,13 @@
 - 2026-07-20 模型澄清：禁区不进入执行顺序；执行顺序只覆盖作业区和连接通道，禁区始终作为全局约束参与校验和规划。
 - 2026-07-20 当前会话边界：只读盘点已完成；本轮仅新增纯 Python 领域模型/兼容 loader/单对象采集状态机/定位健康评估与测试，未启动 ROS/Gazebo、CAN、容器、规划器、执行器或任何运动控制。
 - 2026-07-20 待确认产品细节：真实机器人包络、安全余量和现场标定；仿真使用约 `0.46m × 0.40m` 包络及当前临时 profile，不代替实机测量；已创建根目录 `CONTEXT.md` 记录已确认通用语言。
-- 2026-07-20 实现进度：用户已确认三个公开 seam；几何生成、全局禁区扣除、任务关系校验、通道安全校验和旧 YAML 转换已按 red→green 完成；17 项模型测试、42 项包测试和 mower_coverage 构建均通过。
-- 当前工作区实况：分支 `fix/web-launch-obstacle-planning`，HEAD `77886aa`；本轮提交后工作树干净。
-- 2026-07-20 当前会话实现：新增 `mission/loader.py` 的 `load_mission_data/load_mission_file`，旧 `areas` 自动转换为全局禁区模型；新增 4 项 loader 回归，模型异常输入回归从 17 项增至 22 项。
-- 2026-07-20 当前会话决策：不把新任务反向塞入旧 `areas + inner_rings` 消费链；旧链继续读取旧格式，新的三类对象由后续采集/规划入口直接消费。
+- 2026-07-20 实现进度：用户已确认三个公开 seam；几何生成、全局禁区扣除、任务关系校验、通道安全校验和旧 YAML 转换已按 red→green 完成；当前 23 项模型回归通过，包级 68 项中 67 项通过，唯一失败为沙箱 socket 权限。
+- 当前工作区实况：分支 `fix/web-launch-obstacle-planning`，HEAD `f1767de`；本轮提交后工作树干净。
+- 2026-07-20 当前会话实现：新增 `mission/loader.py` 的 `load_mission_data/load_mission_file/mission_to_legacy_areas`，旧 `areas` 自动转换为全局禁区模型；loader 回归现为 7 项，模型异常输入回归现为 23 项。
+- 2026-07-20 当前会话决策：旧多区域 loader/规划器通过显式适配消费无 corridor 的新任务；全局禁区转换为每个旧作业区的 `inner_rings`，包含 corridor 的任务 fail-closed，通道不会被丢弃。
 - 2026-07-20 当前会话实现：新增 `localization/health.py` 的 `assess_localization()`；6 项回归覆盖 GREEN、RTK 丢失 YELLOW、Mid-360/点云/地图位姿 RED 和 malformed input fail-closed。当前未接 ROS 话题或发布健康消息。
-- 2026-07-20 当前会话实现：新增 `mission/capture.py` 的 `CaptureSession`；5 项回归覆盖单对象、原始轨迹、定位异常草稿、撤销和确认门禁。它只产生任务对象，不发布 ROS 或速度命令。
-- 下一窗口：先为 `/localization/health` 监测适配器补充配置化阈值和输入话题契约，再接 Web 采集向导；定位健康阈值、真实机器人包络、CAN/急停/遥控接管和 Mid-360 安全验收未完成前，不启动实机运动。
+- 2026-07-20 当前会话实现：新增 `mission/capture.py` 的 `CaptureSession`；7 项回归覆盖单对象、原始轨迹、定位异常草稿、撤销、确认、corridor 元数据和显式 odom fallback。它只产生任务对象，不发布 ROS 或速度命令。
+- 2026-07-20 当前会话修复：执行顺序缺失/为空时含可执行对象的任务现在 fail-closed；非 `map` 采集 frame 只有显式 `allow_local_odom=True` 才能使用；corridor 确认前必须填写宽度、两端作业区 ID 和双向标志。
+- 2026-07-20 当前会话接线：`mission/multi_area_definer.py` 和 `planning/hill_boustrophedon.py` 读取 YAML 时统一经过 loader；新任务含 corridor 时旧消费链明确失败，不会静默丢弃通道。
+- 2026-07-20 最终审查状态：初次 Standards/Spec review 提出的顺序缺失、旧 loader 未接线、corridor 元数据缺失和局部 odom 未显式授权均已修复；几何补偿/真实 profile 与 ROS/Web 适配属于明确后续项。
+- 下一窗口：先为 `/localization/health` 监测适配器补充配置化阈值，再接 Web 采集向导；定位健康阈值、真实机器人包络/补偿、CAN/急停/遥控接管和 Mid-360 安全验收未完成前，不启动实机运动。
