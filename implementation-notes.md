@@ -31,6 +31,11 @@
 - 初版 `candump` 解析曾接受任意宽度的十六进制 ID；按经典 CAN 11 位标准帧契约收紧为最多 3 个十六进制字符，并补充启动握手、超时和连续解锁键审计。
 - 本轮按指定 baseline 执行双轴 review：Spec 初审指出扩展帧样式 ID 和回放安全审计缺口，已修正；Standards 仅指出交接前已有的 `deploy/rk3588/entrypoint.sh` 及部署测试属于另一范围，按工作区保护规则保留未回滚。CAN 回归 12/12、`py_compile` 和 `git diff --check` 通过。
 
+- 本轮正式 ROS 接入改用自有 `rtk_ntrip_node`，替换 launch 中的 `nmea_navsat_driver`；原因是 NTRIP RTCM 写入和 NMEA 读取必须由同一个串口 owner 完成，保留旧驱动会重现串口竞争。
+- 目标机私有 `.env` 缺少 `UM982_HOST_DEVICE`，因此先用不启动容器的 ARM64 `docker build` 验证镜像，未写入目标机私有配置，也未把设备路径/凭据加入仓库。
+- 首次 ARM64 smoke 暴露核心 `open_serial()` 的 `os` 导入遗漏；已补回并增加 PTY 串口打开回归，随后重新构建并完成目标机 NMEA smoke。
+- 真实 CORS 断流测试发现 TCP socket 仍为 `ESTAB` 但 RTCM 字节停止增长；因此补充 15 秒 RTCM 数据新鲜度超时，断流时 fail-closed 并自动重连，不能仅信任 socket 状态。
+
 # Discovered edge cases
 
 - 当前仓库登记了 5 个 worktree：主 worktree、外部 mid360 worktree，以及 3 个嵌套在主仓库 `.claude/worktrees` 下的 worktree。
@@ -89,7 +94,14 @@
 - key-based SSH 已打通；自动化复核确认用户 `cat` 属于 `sudo` 但不属于 `dialout`，因此当前会话无法读取三个 USB 串口。Docker/Compose 仍未安装，需用户交互式 sudo 完成主机准备。
 - 目标机 `eth1` 已确认使用 `192.168.9.138`；`can0/can1` 均存在但为 DOWN，第一阶段不启动 CAN。UM982 当前暴露三个通用命名的 USB 串口，必须逐个识别 NMEA 口，不能按 `/dev/ttyUSB0` 猜测。
 
+- `open_serial()` 只有在真实 ROS I/O 线程运行时才会被调用；纯 NMEA 解析和健康状态单测不能覆盖导入、权限和 termios 配置，因此新增 PTY 打开回归并保留 ARM64 smoke 作为运行态门槛。
+- 正式节点在没有 `CORS_USER/CORS_PASS` 时仍可安全发布 NMEA `/gps/fix`，但明确发布 `ntrip=DISABLED` 和 `global_position_trusted=false`；不能把“有坐标”误报为“有差分”。
+- CORS 断流可能表现为 TCP 连接暂时保持 `ESTAB` 而没有新 RTCM；必须同时观察 `rtcm_bytes/last_rtcm_age_s/corrections_fresh`，不能只看 `ntrip=CONNECTED`。
+- `docker compose config` 会渲染并打印环境变量，可能把 CORS 凭据暴露到终端或投屏；现场校验统一使用不输出配置的 `docker compose config -q`。
+- 首次出现 `quality=4` 不等于位置已经完成全部收敛；本次 300 秒窗口虽 `300/300` 为 Fixed，但相对首个 Fixed 最大偏差为 `0.112m`，标准差为 east `0.008m`、north `0.010m`、radial `0.008m`。后续若要验收“全程不超过某厘米阈值”，需要增加固定解稳定等待窗口或已测量基准点对照。
+
 # Questions for review
+- 正式节点的真实 CORS 断流/恢复仍需在 RK3588 通过 `CORS_USER/CORS_PASS` 环境变量运行；不得复用对话中暴露过的旧密码。物理 USB 拔插/重新枚举只允许在用户确认设备安全、无运动进程后进行。
 
 - 用户确认 Prolific USB-Serial 物理连接对象就是 UM982；此前“ttyUSB3 可能是电机控制板”的安全假设已失效，但仍需以只读 NMEA 证据确认端口配置。
 - 本轮尝试从当前 WSL SSH 到 `192.168.9.138` 时在沙箱 socket 层返回 `Operation not permitted`，尚未完成远程只读探测；没有向 UM982 写入任何字节。
@@ -103,6 +115,8 @@
 - 若产品需要浏览器直接显示 Web payload 错误，需要另行确认响应 topic/服务契约；当前实现按现有单向 `/web/areas` 协议记录明确 error log，不向浏览器发送新消息。
 - 新问题的下一步应先固定点云时间单调性和执行器实际停车原因，再处理 EKF 参数；不要在没有 `/scan`、`/velodyne_points` 时间戳和 `/cmd_vel` 实测数据时直接降低滤波频率或放宽安全阈值。
 - 产品/架构待确认：覆盖执行与网页机器人位置应继续使用仿真原始 `/odom`，还是统一改用 EKF `/odometry/filtered`；前者便于仿真验收，后者才符合当前融合定位链，不能默默混用。
+- 产品安全策略待确认：RTK 非 Fixed 时是否允许机器人继续执行任务。建议默认仅允许 Mid-360 在短暂、受健康检查约束的降级窗口内维持局部运动；不允许用 Mid-360 重新定义全局边界、连接通道或跨区定位，超时则暂停任务。
+- 产品流程排序已确认：实际遥控采集前先完成 RTK 固定解指标、单串口 ROS 接入、断流/降级/恢复测试三道技术门槛；遥控采集的 App/Web 流程和数据模型可并行设计。物理运动仍额外依赖 CAN/遥控接管、急停和 Mid-360 健康检查验收。
 - 下一窗口需要 A/B 验证：关闭 FAST-LIO/EKF、关闭 `/scan` 或使用 direct 执行模式分别测试“控制器能否驶向首个目标点”；每次只改变一个开关并记录 `/cmd_vel`、`/odom`、`/scan` 和执行状态。
 - 本轮干净短跑没有复现用户的真实停滞；下一步必须用当前 Web/区域文件生成的真实首目标重跑 A/B，并同时记录路径首点、`frame_id`、原始 `/odom` 和 `/odometry/filtered`，否则不能选择修复执行器、规划器或定位契约。
 - 本轮 24–35 秒探针均未观察到 `/velodyne_points` header 回退；历史长跑的回退证据仍有效，但尚不足以证明它是本次干净人工路径停滞的原因。
@@ -124,6 +138,7 @@
 - 在确认 Prolific 线缆连接对象前，不得把 `/dev/ttyUSB3` 写入 `.env` 或启动 NMEA 驱动；若它连接电机控制板，读取/配置串口可能影响后续控制链。
 - Prolific 当前位于 RK3588 的 USB 5-1（OHCI、12M）；`power/control=on` 且 `runtime_status=active`，因此已排除 autosuspend 作为当前断开原因。最近一次断开仍需从线缆、接口或 USB 供电稳定性方向复核。
 - 固定时长串口探针在关闭 fd 的瞬间可能留下最后一条半行；组合监听中其余 `$GNRMC/$GNGGA/$G*GSV` 均带校验和，不能把探针边界的半行误判为 UM982 丢帧。
+- CORS→UM982 的 `str2str` 写入期间启动 ROS NMEA 驱动会造成同一串口多进程访问；实测出现无效 NMEA 校验、`device ... multiple access on port`，随后 `/gps/fix` 不再发布。已停止只读容器，不能用该并发状态评价定位漂移。
 - 运行态已恢复三类 LOG；用户已明确授权并完成 `SAVECONFIG`，返回 `response: OK`。若后续需要验证掉电保持，仍需单独安排受控重启。
 - ROS Humble 的 `/opt/ros/humble/setup.bash` 及其下级 setup 脚本不是 nounset-safe；部署入口不能对它们启用 `set -u`，否则在启动任何业务节点前就会退出。
 - 从有线切换到无线并移动设备后，Prolific 曾断开并重新枚举为 `ttyUSB3`；Compose 因原 by-id 暂时不存在退出，重新枚举后 by-id 仍保持稳定映射，证明不能依赖 ttyUSB 编号。
@@ -187,7 +202,7 @@
 - 自动串口探测证据：Quectel Modem 为 `ttyUSB0~2`，Prolific 为 `ttyUSB3`；ttyUSB3 在 4800/9600/19200/38400/57600/115200/230400 接收设置下均无 NMEA 样本，未发送任何字节。
 - 首次 ARM64 构建证据：源码同步成功；Docker 发送 `1.113GB` 上下文后在拉取 Docker Hub 基础镜像阶段因网络超时退出，未创建目标镜像或启动容器。
 - 目标机 ARM64 构建证据：DaoCloud 基础镜像拉取成功（digest `sha256:afb40d6be65331c20a114d4e229a7ef099fed1b17bf6370daee193514b32aa16`）；收紧上下文后 `135.9MB` 原生构建成功，镜像 `mower-rk3588:humble-rtk` 为 `arm64/linux`。
-- 目标机容器 smoke 证据：无网络、无设备的临时容器中可枚举 `mower_coverage`、`mower_hardware`、`nmea_navsat_driver` 和 `rosbridge_server`，`rtk_readonly.launch.py --show-args` 通过；Compose config 通过，未创建 `mower-rkt`。
+- 目标机容器 smoke 证据：无网络、无设备的临时容器中可枚举 `mower_coverage`、`mower_hardware` 的 `rtk_ntrip_node` 和 `rosbridge_server`，`rtk_readonly.launch.py --show-args` 通过；Compose config 通过，未创建正式 `mower-rkt`。
 - 目标机串口复验：by-id 稳定指向 `/dev/ttyUSB0`，无进程占用；115200/8N1 下 `CONFIG` 返回 UM982 配置响应，`GPGGA/GPRMC/GPGSV COM3 1` 均返回 ACK。随后无发送监听 12 秒收到 2 条 GGA、2 条 RMC、6 条 GSV，室内状态为无 Fix；测试期间无新增 USB 断开。
 - ARM64 部署回归：旧镜像直接运行入口稳定失败于 `AMENT_TRACE_SETUP_FILES: unbound variable`；同镜像关闭 nounset 的对照通过，源码回归 6/6 通过，修复后的镜像需重新构建后再做容器与 ROS 话题验收。
 - 修复后 ARM64 运行态：入口 smoke 通过，`mower-rkt` 重建后持续 `running` 且重启次数为 0；NMEA 驱动连接 `/dev/um982` @ 115200，`/gps/fix` 发布频率约 1 Hz，室内消息为 `status=-1`/NaN 坐标，8080 返回 HTTP 200、9090 端口可达，`/cmd_vel` 无发布者。
@@ -195,16 +210,43 @@
 - CAN 协议回归证据：协议矩阵、纯离线解码和 `candump -L` 回放审计共 12 项测试通过；`mower_hardware` 的 `colcon test` 发现并通过全部 12 项，安装后反馈样例可导入解码。
 - 本轮构建证据：`colcon build --symlink-install` 全量 4 包通过；`git diff --check` 和 Python 语法检查通过。未启动 `can0/can1`，未发送帧，未接入 `/cmd_vel`。
 - 资料归档证据：`docs/hardware/um982/UM982_User_Manual.pdf` 已确认是 PDF 1.5 用户手册，纳入本轮资料归档。
+- 本轮 CORS 测试前置盘点：RK3588 当前为 `192.168.10.77`、`aarch64`，Docker/Compose 与既有 `mower-rk3588:humble-rtk` 镜像可用；稳定 UM982 路径为 `/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_DPBNb152808-if00-port0` → `/dev/ttyUSB0`，`can0/can1` 保持 DOWN。
+- 本轮 CORS 工具状态：现有镜像不含 NTRIP 客户端；RK3588 软件源提供 ARM64 `rtklib`。用户已在目标机完成 `rtklib` 安装并确认 `str2str` 可执行；尚未注入 CORS 账号、尚未向 UM982 转发 RTCM。
+- 本轮 CORS 连接探针：`114.111.30.20:8002` TCP 可达，source table 确认 `RTCM33GRCEJ` 为有效 `rtcm3.3` TPVRS 源；无 GGA 的 NTRIP 文件输出测试连续连接但 `RTCM_BYTES=0`，不能据此判定账号失败，下一步先回传固定位置 GGA。
+- 本轮 UM982 只读复验：8 秒采样得到有效 NMEA；当前 GGA 为 quality `1`、19 颗卫星、HDOP `0.8`，位置约 `23.39633658,113.16141518`、海拔 `13.9m`。未向串口写入任何字节。
+- 本轮 CORS 串口注入尝试：用户本地执行 `str2str` 写入 UM982 时返回 `stream server start error`；远程只读检查确认容器已停止、`/dev/ttyUSB0` 存在且无进程占用，需先复核 RTKLIB 串口 URL/启动参数。CORS 凭据曾被误发到对话，已要求用户立即重置；凭据不写入日志、代码或本文件。
+- 本轮 RTKLIB 串口参数复核：Debian `str2str` 使用 `serial://ttyUSB0:115200:8:n:1:off` 可打开并等待输入；带绝对路径的 `serial:///dev/ttyUSB0:...` 会在启动阶段报 `stream server start error`。当前未向 UM982 写入 RTCM。
+- 本轮 CORS→串口并发验证：RTCM 转发进程仍在运行时启动 `mower-rkt`，容器保持运行但 NMEA 驱动因串口多进程访问退出，`/gps/fix` 无可用发布；已执行 `docker compose stop mower_rtk`，未启动任何运动控制。
+- 本轮单串口探针：新增 `deploy/rk3588/rtk_ntrip_serial_probe.py`，仅使用 Python 标准库并从 `CORS_USER`/`CORS_PASS` 环境变量读取凭据；本地 NMEA checksum/解析/漂移统计自检通过，复制到 RK3588 后 `--help` 烟测通过，尚未连接真实 CORS。
+- 本轮探针握手回归：真实运行返回“caster closed before response”；RK3588 用无效占位凭据的 curl 得到旧式 `ERROR - Bad Password` 无 HTTP 头响应，确认探针原先会误报。已增加旧式错误/`ICY 200 OK`/HTTP 200 解析，回归自检与 RK3588 `--help` 烟测通过；真实新凭据结果仍待重跑确认。
+- 本轮 CORS 认证结论：修正版单串口探针从 RK3588 收到明确 `NTRIP caster rejected request: ERROR - Bad Password`；因此当前失败点是账号/密码或账号对 mountpoint 的授权，不是 UM982 串口、RTCM 注入或定位漂移。凭据不写入日志或交接。
+- 本轮凭据边界：探针刻意不交互式询问账号密码，只读取 `CORS_USER`/`CORS_PASS`；shell 中已 export 的变量会跨命令持续存在，若重置密码后未重新设置环境变量，探针会继续使用旧值并得到同样的认证失败。后续需先 `unset` 再通过隐藏输入重新设置。
+- 本轮 CORS 完整测试：90 秒收到 `RTCM_BYTES=79317`，`VALID_GGA=90`、`INVALID_GGA=0`；质量为 DGPS `2` 共 36 次、RTK Float `5` 共 54 次，未出现 RTK Fixed `4`。位置散布为 east 2.984 m、north 9.192 m、相对首点最大 8.919 m；只有在确认天线测试期间静止后，才能把该散布判定为漂移。
+- 本轮部署边界：RTK 探针之前只复制到 RK3588 的 `/tmp`；重启或临时目录清理后路径会消失，导致在接触 CORS/串口前即报 `can't open file`。项目源文件仍位于 `deploy/rk3588/rtk_ntrip_serial_probe.py`，已重新复制到 `/tmp`。
+- 本轮静态户外验收的散布口径：探针当前的 `POSITION_SPREAD_M` 混合统计了 single/DGPS 收敛过程和 RTK Fixed 样本；不能把 2.372 m 直接当作固定解抖动。若要做厘米级稳定性结论，需单独统计 quality=4 样本的散布或标准差。
+- 下一阶段验收顺序：先增加 quality=4 固定解专属散布/标准差统计；再实现单一串口所有者的正式 NTRIP+NMEA ROS 节点和 `/rtk/status` 契约；最后才接入 Mid-360 降级运动策略。当前探针仍是一次性测试工具，不能与 ROS NMEA 容器并行运行。
+- 本轮固定解工具已新增 `FIXED_ONLY_COUNT/FIRST_FIXED_S/FIXED_ONLY_SPREAD_M/FIXED_ONLY_STD_M/LONGEST_CONTINUOUS_FIXED_S` 输出；9 项 RTK 单测、12 项 CAN 单测、部署静态测试 6/6、`py_compile` 和 `git diff --check` 通过。
+- 本轮本地 `colcon build --symlink-install --packages-select mower_coverage mower_hardware` 成功；ARM64 镜像原生构建成功，临时无网络/无设备 smoke 可枚举 `rtk_ntrip_node`，目标机现场 NMEA smoke 发布 `/gps/fix` 与 `/rtk/status`，`invalid_gga=0`。
+- 本轮目标机重启回归通过：容器重启后节点重新经历 `NO_FIX → SINGLE`，无旧进程/串口占用残留；未启动 CAN、规划器、执行器或 `/cmd_vel`。
+- 本轮真实正式节点验收：通过私有 CORS 环境启动 `mower-rkt`，日志经历 `SINGLE → DGPS → RTK_FIXED`；状态快照为 `ntrip=CONNECTED`、`quality=4`、`rtcm_bytes=54060`、`invalid_gga=0`、`global_position_trusted=true`，`/gps/fix` 约 1 Hz。
+- 本轮真实 300 秒 Fixed-only 验收：`STOP_REASON=duration complete`、`RTCM_BYTES=263073`、`VALID_GGA=300`、`INVALID_GGA=0`、`GGA_QUALITY_COUNTS={4: 300}`；首次 Fixed `0.8s`，Fixed-only 标准差 east `0.003m`、north `0.011m`、radial `0.007m`，最长连续 Fixed `299.0s`。
+- 本轮最新真实 300 秒 Fixed-only 重测：`ELAPSED_S=300.1`、`RTCM_BYTES=273681`、`VALID_GGA=300`、`INVALID_GGA=0`、`GGA_QUALITY_COUNTS={4: 300}`；首次 Fixed `0.7s`，Fixed-only 标准差 east `0.008m`、north `0.010m`、radial `0.008m`，最长连续 Fixed `299.0s`。相对首个 Fixed 最大偏差为 `0.112m`，因此对外使用“厘米量级静态重复性”口径，不宣称 300 秒内每个样本均在 1cm 内。
+- 本轮真实 CORS 断流/恢复闭环：旧逻辑在 RTCM 停流但 TCP `ESTAB` 时错误保持信任；加入 15 秒 RTCM 新鲜度门禁后，阻断期间为 `ntrip=DISCONNECTED/corrections_fresh=false/global_position_trusted=false`，解除规则后自动重连并恢复 `RTK_FIXED`、`corrections_fresh=true`、`global_position_trusted=true`，恢复快照 `rtcm_bytes=86282`、`invalid_gga=0`。
 
 # Summary
 
-- Deviations count: 24（含本轮实机 Docker/RTK 部署骨架、标准 NMEA 驱动入口、GNSS 状态显示修正、目标机 Docker 缺失盘点、registry/context 适配、ROS setup 兼容修复和 CAN 离线测试入口适配）。
+- Deviations count: 27（在历史 24 项基础上新增单串口正式节点、目标机私有 `.env` 缺失时的直接构建、以及 ARM64 smoke 暴露并修复的 `os` 导入遗漏）。
 - Most likely revisit: 下位机 CAN 协议与控制权归属尚未确认；需要在伙伴方案、总线接口和电机安全机制之间做明确 owner 决策，不能仅凭帧样本猜测控制协议。
-- Edge cases found: 60（新增 CAN 物理写入风险、双方案资源冲突、经典/扩展帧 ID 表示和协议缺少物理安全事件字段；既有无线 USB 重新枚举、by-id 漂移、COM3 无周期 LOG、USB 重枚举仍需保留）。
-- Verification status: RTK 115200/8N1、室外 Fix、容器 `/gps/fix`、Web 和安全边界已验收；CAN 仅完成离线矩阵/解码/回放审计，`can0/can1` 未启用、未发送控制帧、未接入规划器。
+- Edge cases found: 64（在历史 60 项基础上新增 `open_serial()` 仅运行态暴露、无 CORS 凭据时 NMEA 与差分状态分离、Compose 配置校验可能打印凭据，以及首次 Fixed 仍可能包含初始收敛；既有无线 USB 重新枚举、by-id 漂移、COM3 无周期 LOG、USB 重枚举仍需保留）。
+- Verification status: Fixed-only 统计、单串口 ROS 节点、CORS 断流/恢复、物理 USB 重新枚举、ARM64 镜像和目标机运行态均已验收；CAN 仍仅完成离线审计，未启用接口或发送帧。
 - Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；若收到 DBC、下位机源码或 `candump -L`，先用现有审计做离线回放对照，再讨论任何现场 CAN 操作授权。
 
-## Active Handoff（当前交接进度）
+## Historical Handoff（历史交接记录）
+
+- 2026-07-20 当前交接：三项门槛的软件实现已完成。探针现在分组统计 Fixed-only；`mower_hardware/rtk_ntrip_node.py` 独占 UM982 串口并同时处理 NMEA/RTCM；`/rtk/status` 的 `global_position_trusted` 只有在“新鲜 GGA + quality=4 + NTRIP CONNECTED + 串口 CONNECTED”同时满足时才为 true。
+- 2026-07-20 现场证据：RK3588 ARM64 修复镜像构建成功；无 CORS 凭据的只读节点 smoke 已验证 `/gps/fix` 有效坐标、`/rtk/status` 的 `serial=CONNECTED`、`invalid_gga=0`、`ntrip=DISABLED`；容器重启后再次从 `NO_FIX` 恢复到 `SINGLE`。
+- 2026-07-20 故障矩阵：断流撤销全局信任、Float 降级/Fixed 恢复、串口拔出/重新枚举 fail-closed、重启清空旧状态均有 9 项离线回归；实际 CORS 断流/恢复还需用户通过环境变量提供新凭据，物理 USB 拔插需用户现场确认后执行。
+- 2026-07-20 安全边界：目标机当前没有运行容器、`str2str` 或运动控制；未启动 `can0/can1`、未发送 CAN 帧，未发布 `/cmd_vel`。目标机私有 `.env` 仍需补 `UM982_HOST_DEVICE` 才能用 Compose 启动正式 profile。
 
 - 当前进度：已新增独立 `mower_hardware` 包、`rtk_readonly.launch.py`、RK3588 ARM64 Docker/Compose 部署骨架、CAN 协议矩阵和纯离线 `0x005/0x507` 解码/回放审计；不启动仿真、规划器、执行器、SocketCAN 或电机。
 - 当前提交：`f270eb5 Archive UM982 user manual`；当前分支为 `fix/web-launch-obstacle-planning`，不推送远端。工作树仍保留交接前已有的部署入口修改。
@@ -216,6 +258,28 @@
 - 当前会话进度（实时）：无线地址为 `192.168.10.77`；移动后 Prolific 从 ttyUSB0 重新枚举为 ttyUSB3，旧容器因设备短暂消失退出，当前 by-id 已恢复且无占用。室外原始 NMEA 已确认 RMC `A`、GGA fix `1`，最高样本 23 颗卫星、HDOP `0.6`。
 - 当前会话进度（实时）：用户已授权 `SAVECONFIG`，清空输入后收到 `$command,SAVECONFIG,response: OK*55`；随后真实时间监听约 12 秒收到 20 条 GGA、20 条 RMC、471 条 GSV。
 - 当前会话进度（实时）：`mower-rkt` 已按 by-id 重新启动并稳定 0 次重启；室外 `/gps/fix` 有效坐标约 `23.39636759,113.16145711`、频率约 1 Hz、status=0；8080=200、9090 可达、`/cmd_vel` 无发布者。
+- 当前会话进度（实时）：RK3588 已重新开机并可用专用 SSH key 访问 `192.168.10.77`；当前 `mower-rkt` 未运行，等待 CORS caster 的非敏感连接信息与本地注入密码后开始 NTRIP/RTCM 测试。
+- 当前会话进度（实时）：用户确认 RTCM 已开始写入；尝试同时启动只读容器后发现串口并发访问导致 NMEA 校验错误和 `/gps/fix` 中断，容器已停止，RTCM 转发进程保留。下一步必须使用单一串口所有者的 NTRIP/串口复用方案。
+- 当前会话进度（实时）：单进程探针已放置在 RK3588 `/tmp/rtk_ntrip_serial_probe.py`，远端帮助烟测通过；真实测试等待用户停止旧 `str2str`、重置已暴露的 CORS 密码，并在目标机环境变量中准备新凭据。
+- 当前会话进度（实时）：修正版探针已同步到 RK3588；它会把 caster 的旧式密码拒绝明确报告为 `NTRIP caster rejected request: ERROR - Bad Password`，不会打印凭据。等待用户用重置后的环境变量重跑。
+- 当前会话进度（实时）：RK3588 单串口探针已实际运行 90 秒入口流程，但 CORS 在认证阶段返回 `ERROR - Bad Password`，尚未向 UM982 注入 RTCM，也未采集有 CORS 的定位证据。需先在 CORS 平台重置/确认账号、密码和 mountpoint 权限，再重跑。
+- 当前会话进度（实时）：CORS 认证已恢复；单串口探针完整跑完 90 秒，RTCM 持续注入且 UM982 输出 90 条有效 GGA，54 条为 RTK Float、36 条为 DGPS、0 条为 RTK Fixed。当前证据证明“CORS 链路和 UM982 差分接收可工作”，尚不能证明静止漂移或厘米级固定解。
+- 当前会话进度（实时）：用户将 RTK 蘑菇头移到户外后，RK3588 `/tmp` 中的探针因临时文件消失而无法启动；已从工作区重新复制并确认文件存在。此次错误与户外定位无关，下一步可在天线固定后重新运行 300 秒测试。
+- 当前会话进度（实时）：户外固定测试已完整运行 300.1 s；收到 284971 字节 RTCM（约 7.60 kbps），300 条有效 GGA、0 条无效，quality=4 RTK Fixed 289 条（96.3%）、quality=2 10 条、quality=1 1 条；总体位置散布 east 1.451 m、north 2.285 m、相对首点最大 2.372 m。该结果已证明链路和固定解收敛，固定解自身抖动仍需分组统计。
+- 当前会话决策（实时）：CORS/UM982 户外固定测试已通过链路级验收；下一步不再重复启动 `str2str`+ROS 双进程，而是先完善固定解指标，再设计正式单串口 ROS 接入。CAN、规划器、执行器和 Mid-360 仍未接入。
+- 当前会话决策（实时）：遥控采集实机任务排在 RTK 三道技术门槛之后；`docs/remote-capture-mission-plan.md` 已保存，可在新窗口先做离线产品设计，但不能据此提前启动电机或 CAN。
+- 当前会话进度（实时）：已将遥控采集、禁区、连接通道方案保存为 `docs/remote-capture-mission-plan.md`；未覆盖本文件既有交接内容，未修改 CAN/电机控制链。
 - 当前会话决策（实时）：下一阶段可以接收并阅读下位机 CAN 协议资料，但只做离线协议解析/帧回放；不启用 `can0/can1`，不发送帧，不启动伙伴的另一套控制方案。
 - 当前会话审查结论（实时）：Spec 初审发现扩展帧样式 ID 未拒绝、回放未审计启动/超时/连续解锁键，已补齐并以 12 项回归覆盖；Standards 发现的部署入口修改属于交接前已有改动，保留但不归入 CAN 交付范围。
 - 下一步：等待 DBC、下位机源码或真实 `candump -L` 抓包；先做离线字段/时序对照，重点确认无 CRC/ACK 下的产品错误提示和 CAN 控制权 owner。实际电机动作仍需另行明确授权。
+- 下一步（CORS 测试）：先在不启动运动控制的前提下验证 NTRIP 账号认证和 RTCM 数据流；随后用单一进程/串口代理同时完成 RTCM 写入和 NMEA 读取，最后按固定时间窗口采集 GGA/RMC/卫星数/HDOP/位置变化，比较无 CORS 与有 CORS 的漂移。
+
+## Active Handoff（当前交接进度）
+
+- 当前教学交付：已建立 `MISSION.md`、RTK 领导演示 lesson、现场速查表、300 秒静态验收结果卡和学习记录；演示只启动 `mower_rtk` 只读 profile，不启动 CAN、规划器、执行器、电机或 `/cmd_vel`。为避免把 CORS 密码打印到终端，教学命令统一使用 `docker compose config -q`。
+- 当前状态：Fixed-only 统计、单串口 `rtk_ntrip_node`、CORS 断流/恢复、容器重启和物理 USB 重新枚举均已完成；未启动 CAN、规划器、执行器或 `/cmd_vel`。
+- 最新 300 秒静态结果：RTCM `273681` 字节，300/300 条 GGA 为 RTK Fixed，首次 Fixed `0.7s`；Fixed-only 标准差 east `0.008m`、north `0.010m`、radial `0.008m`，最长连续 Fixed `299.0s`；相对首个 Fixed 最大偏差 `0.112m`，对外口径为厘米量级静态重复性。
+- CORS 断流策略：RTCM 超过 15 秒未更新即 `corrections_fresh=false`、`global_position_trusted=false`；解除临时规则后节点自动重连并恢复 `RTK_FIXED` 和可信全局定位。
+- USB 重新枚举结果：Prolific by-id 恢复并指向 `/dev/ttyUSB0`；节点日志经历 `SERIAL_UNAVAILABLE → NO_FIX → SINGLE → DGPS → RTK_FIXED`，容器 `RestartCount=0`，最终状态 `corrections_fresh=true`、`global_position_trusted=true`、`invalid_gga=0`。
+- 当前安全边界：RK3588 正式只读 profile 可继续运行；Mid-360 降级运动策略、CAN 控制和遥控采集实机作业仍未启用。
+- 下一窗口：先阅读 `docs/remote-capture-mission-plan.md`，只做遥控采集作业区、禁区和跨区通道的产品/数据模型设计与离线验证；未完成 CAN、急停、遥控接管和 Mid-360 安全验收前，不启动实机运动。

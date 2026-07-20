@@ -23,4 +23,9 @@ setup(
     maintainer_email='yh@example.com',
     description='Hardware bring-up profiles for the mower platform.',
     license='Apache-2.0',
+    entry_points={
+        'console_scripts': [
+            'rtk_ntrip_node = mower_hardware.rtk_ntrip_node:main',
+        ],
+    },
 )

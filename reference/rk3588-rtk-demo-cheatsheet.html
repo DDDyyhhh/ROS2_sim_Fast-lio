@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>RK3588 RTK 现场速查</title>
+<style>body{max-width:820px;margin:30px auto;padding:0 24px;color:#20312e;font:16px/1.55 system-ui,"Noto Sans SC",sans-serif}h1,h2{color:#147d72}h2{margin-top:28px;border-bottom:1px solid #d7e1de}pre{padding:14px;overflow:auto;color:#eff8f5;background:#17252b;border-radius:6px}.ok{padding:12px 16px;background:#e7f5ef;border-left:4px solid #147d72}code{font-family:ui-monospace,monospace}@media print{body{margin:0}}</style>
+</head>
+<body>
+<h1>RK3588 RTK 领导演示速查</h1>
+<div class="ok"><strong>安全：</strong>电机电源关闭；不启动 CAN、规划器、执行器或 <code>/cmd_vel</code>。</div>
+<h2>启动</h2>
+<pre>ssh rk3588 &amp;&amp; cd ~/mower_ws/deploy/rk3588 &amp;&amp; docker compose config -q &amp;&amp; echo CONFIG_OK
+docker compose up -d --no-build --force-recreate mower_rtk
+docker compose ps</pre>
+<h2>状态</h2>
+<pre>docker exec mower-rkt bash -lc 'source /opt/ros/humble/setup.bash &amp;&amp; source /opt/mower_ws/install/setup.bash &amp;&amp; ros2 topic echo /rtk/status --once --field data'</pre>
+<p>重点：<code>state=RTK_FIXED</code>、<code>ntrip=CONNECTED</code>、<code>corrections_fresh=true</code>、<code>global_position_trusted=true</code>、<code>invalid_gga=0</code>。</p>
+<h2>已完成验收</h2>
+<p><a href="../docs/rtk-300s-static-acceptance.md">300 秒静态验收结果</a>：最新一轮 300/300 条为 <code>RTK_FIXED</code>；Fixed-only 东向标准差约 8 mm、北向约 10 mm。</p>
+<h2>频率和坐标</h2>
+<pre>docker exec mower-rkt bash -lc 'source /opt/ros/humble/setup.bash &amp;&amp; source /opt/mower_ws/install/setup.bash &amp;&amp; ros2 topic hz /gps/fix --window 5'
+docker exec mower-rkt bash -lc 'source /opt/ros/humble/setup.bash &amp;&amp; source /opt/mower_ws/install/setup.bash &amp;&amp; ros2 topic echo /gps/fix --once'</pre>
+<h2>一句话</h2>
+<p>CORS 提供 RTCM，UM982 计算 RTK Fixed；系统只有在差分数据仍新鲜时才信任全局位置。</p>
+<p><a href="../lessons/0001-rk3588-rtk-demo.html">打开完整演示 lesson</a></p>
+</body></html>

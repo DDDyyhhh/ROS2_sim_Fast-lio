@@ -11,10 +11,8 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y \
         python3-colcon-common-extensions \
         python3-numpy \
-        python3-serial \
         python3-shapely \
         python3-yaml \
-        ros-humble-nmea-navsat-driver \
         ros-humble-rmw-cyclonedds-cpp \
         ros-humble-rosbridge-server \
     && rm -rf /var/lib/apt/lists/*

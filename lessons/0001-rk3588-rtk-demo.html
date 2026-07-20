@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RK3588 RTK 领导演示</title>
+  <style>
+    :root{--ink:#23303b;--muted:#687783;--accent:#147d72;--paper:#fbfaf6;--line:#d9e2df}
+    *{box-sizing:border-box}body{margin:0;color:var(--ink);background:#e9efec;font:16px/1.65 system-ui,"Noto Sans SC",sans-serif}
+    main{max-width:900px;margin:36px auto;padding:52px 64px;background:var(--paper);box-shadow:0 10px 35px #1b3b3620}
+    h1{margin:0 0 8px;font-size:2.2rem}h2{margin:36px 0 10px;color:var(--accent);border-bottom:1px solid var(--line);padding-bottom:5px}
+    .lede,.small{color:var(--muted)}.warning,.success{padding:14px 18px;border-left:4px solid;margin:18px 0}.warning{background:#fff3df;border-color:#d18a24}.success{background:#e7f5ef;border-color:var(--accent)}
+    code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}pre{overflow:auto;padding:15px 17px;color:#edf6f3;background:#17252b;border-radius:7px;font-size:.88rem}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:9px 10px;border-bottom:1px solid var(--line)}th{color:var(--accent)}
+    @media print{body{background:white}main{margin:0;padding:18mm;box-shadow:none;max-width:none}}
+  </style>
+</head>
+<body><main>
+  <h1>RK3588 RTK 领导演示</h1>
+  <p class="lede">用 5–10 分钟展示 CORS 差分数据进入 UM982、接收机达到 RTK Fixed、ROS 判断全局定位可信，同时明确机器人没有运动。</p>
+  <div class="warning"><strong>安全边界：</strong>电机电源关闭、急停有效；不启动 CAN、规划器、执行器或 <code>/cmd_vel</code>。</div>
+  <h2>一、演示前检查</h2>
+  <ol><li>蘑菇头固定在户外开阔位置，测试期间不要移动。</li><li>账号密码只保存在 RK3588 私有 <code>~/mower_ws/deploy/rk3588/.env</code>，不要投屏。</li><li>确认没有第二个串口 owner：</li></ol>
+  <pre>ssh rk3588 &amp;&amp; cd ~/mower_ws/deploy/rk3588 &amp;&amp; docker compose config -q &amp;&amp; echo CONFIG_OK
+pgrep -af 'str2str|nmea_serial|rtk_ntrip' || true
+readlink -f /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_DPBNb152808-if00-port0</pre>
+  <h2>二、启动正式演示</h2>
+  <pre>cd ~/mower_ws/deploy/rk3588 &amp;&amp; docker compose up -d --no-build --force-recreate mower_rtk &amp;&amp; docker compose ps</pre>
+  <p>看到 <code>mower-rkt Up</code> 后打开三个窗口：</p>
+  <h3>窗口 A：启动过程</h3>
+  <pre>docker compose logs -f --tail=30 mower_rtk</pre>
+  <p>等待日志出现：<code>serial=CONNECTED</code> → <code>ntrip=CONNECTED</code> → <code>RTK_FIXED</code>。</p>
+  <h3>窗口 B：机器可读状态</h3>
+  <pre>docker exec mower-rkt bash -lc 'source /opt/ros/humble/setup.bash &amp;&amp; source /opt/mower_ws/install/setup.bash &amp;&amp; ros2 topic echo /rtk/status --once --field data'</pre>
+  <table><tr><th>字段</th><th>含义</th></tr>
+    <tr><td><code>solution=RTK_FIXED</code></td><td>UM982 当前为固定解。</td></tr>
+    <tr><td><code>quality=4</code></td><td>原始 GGA 的 RTK Fixed 标志。</td></tr>
+    <tr><td><code>ntrip=CONNECTED</code></td><td>已连接 CORS caster。</td></tr>
+    <tr><td><code>corrections_fresh=true</code></td><td>最近 15 秒确实收到 RTCM。</td></tr>
+    <tr><td><code>global_position_trusted=true</code></td><td>系统允许把当前 RTK 当作全局定位依据。</td></tr>
+    <tr><td><code>invalid_gga=0</code></td><td>GGA 校验正常。</td></tr></table>
+  <h3>窗口 C：频率和坐标</h3>
+  <pre>docker exec mower-rkt bash -lc 'source /opt/ros/humble/setup.bash &amp;&amp; source /opt/mower_ws/install/setup.bash &amp;&amp; ros2 topic hz /gps/fix --window 5'
+docker exec mower-rkt bash -lc 'source /opt/ros/humble/setup.bash &amp;&amp; source /opt/mower_ws/install/setup.bash &amp;&amp; ros2 topic echo /gps/fix --once'</pre>
+  <p>正常频率约 <code>1 Hz</code>。坐标用于展示位置，RTK 类型以窗口 B 的 <code>/rtk/status</code> 为准。</p>
+  <h2>三、推荐话术</h2>
+  <div class="success"><p><strong>“这里不是只读到了 GPS 坐标。”</strong></p><p>“CORS 通过 NTRIP 提供 RTCM 差分数据，UM982 接收并计算固定解。单一节点独占串口，同时读取 NMEA、写入 RTCM，并单独发布 RTK 状态。”</p><p>“只有串口正常、GGA 新鲜、quality=4、CORS 已连接且最近收到 RTCM，<code>global_position_trusted</code> 才为 true。”</p></div>
+  <h2>三点五、展示已完成的 300 秒验收</h2>
+  <p>先展示<a href="../docs/rtk-300s-static-acceptance.md">300 秒静态验收结果</a>，再展示 RK3588 当前的 <code>/rtk/status</code>。最新一轮 300/300 条为 <code>RTK_FIXED</code>；Fixed-only 样本东西向标准差约 8 mm、南北向约 10 mm。这里的标准差表示固定解短时重复性，不是绝对定位误差。</p>
+  <h2>四、领导可能追问</h2>
+  <table><tr><th>问题</th><th>回答</th></tr>
+    <tr><td>为什么不是一有坐标就可信？</td><td>普通单点定位也有坐标，但不能保证厘米级全局位置；必须同时满足解状态和差分新鲜度。</td></tr>
+    <tr><td>断网会不会继续乱跑？</td><td>RTCM 超过 15 秒不更新会撤销全局信任；当前 profile 不发运动命令。</td></tr>
+    <tr><td>USB 拔插会不会必须固定 ttyUSB0？</td><td>不会，系统使用 by-id 稳定路径。</td></tr>
+    <tr><td>这次有没有让机器动？</td><td>没有，CAN、规划器、执行器和 <code>/cmd_vel</code> 都没有启动。</td></tr></table>
+  <h2>五、不要临时做的事</h2>
+  <ul><li>不要同时启动 <code>str2str</code> 和 ROS 节点。</li><li>不要把 `.env`、密码或完整环境变量投屏。</li><li>不要为了展示断流关闭 RK3588 Wi-Fi；断流恢复测试已经单独完成。</li><li>不要在本次演示里启动 CAN 或电机。</li></ul>
+  <p class="small">资料：<a href="../deploy/rk3588/README.md">RK3588 部署说明</a> · <a href="../implementation-notes.md">实施交接记录</a> · <a href="../docs/hardware/um982/UM982_User_Manual.pdf">UM982 用户手册</a> · <a href="https://docs.ros.org/en/humble/Concepts/Basic/About-Command-Line-Tools.html">ROS 2 官方命令行工具</a></p>
+  <p class="small">不清楚某个字段时，继续问我；下一课可以练习如何把状态转成 App/Web 产品提示。</p>
+</main></body></html>
