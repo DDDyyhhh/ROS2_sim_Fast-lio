@@ -1,5 +1,7 @@
 # Deviations
 
+- 应用户要求整理根目录文档：将当前领域上下文下沉到 `docs/domain/`，合并 RTK 演示的 `MISSION.md` 与 `RESOURCES.md`，并把过时的操作/交接概览移入 `docs/archive/`；采用普通文件移动以避开沙箱只读 Git index，内容可由 Git 历史恢复，未改代码或 ROS 行为。
+
 - 根目录已经存在无效的 `.git` 目录，而计划假设 Git 根仅位于 `src/ROS2_sim_Fast-lio`。迁移前先盘点其内容，避免覆盖未知用户状态。
 - Codex 沙箱把根 `.git` 挂为只读，用户在普通终端完成 Git 元数据移动后继续；源码迁移未在中间态执行，仓库历史保持完整。
 - 为确保旧 `ros2 run` 真正可用，新增标准 `setup.cfg` 将脚本安装到 `lib/mower_coverage`；原计划只提到 `setup.py` 映射，但仅映射不足以被 ROS 2 枚举。
@@ -106,6 +108,7 @@
 - 任务顺序字段的 `null`、字符串或不可哈希条目都必须 fail-closed；不能把它们当作空顺序或让 `set(order)` 抛出未处理异常。
 - YAML 同时包含 `objects` 和旧 `areas` 时格式有歧义，loader 明确拒绝，而不是按字段优先级静默选择。
 - 定位健康只要缺少任一必需信号或信号不是布尔值就进入 `RED`；RTK 非 Fixed/不新鲜但局部链健康为 `YELLOW`，本首版仍禁止采集和执行。
+- 根目录文档下沉时发现历史 overview 内仍有“当前交接”旧路径；归档时同步改为指向 `implementation-notes.md`，避免新会话误读过时状态。
 
 # Questions for review
 - 正式节点的真实 CORS 断流/恢复仍需在 RK3588 通过 `CORS_USER/CORS_PASS` 环境变量运行；不得复用对话中暴露过的旧密码。物理 USB 拔插/重新枚举只允许在用户确认设备安全、无运动进程后进行。
@@ -265,11 +268,11 @@
 
 # Summary
 
-- Deviations count: 31（在历史 30 项基础上新增旧消费者适配对 corridor 的明确拒绝；定位健康阈值仍不猜默认值）。
+- Deviations count: 32（在历史 31 项基础上新增用户确认的可逆文档归位；旧消费者适配对 corridor 的明确拒绝和定位健康阈值边界仍保留）。
 - Most likely revisit: 下位机 CAN 协议与控制权归属尚未确认；需要在伙伴方案、总线接口和电机安全机制之间做明确 owner 决策，不能仅凭帧样本猜测控制协议。
-- Edge cases found: 80（在历史 78 项基础上新增 corridor 元数据缺失和未显式授权的局部 odom frame）。
-- Verification status: 新增 loader/定位健康/单对象采集纯 Python 核心及 23 项模型回归通过；mower_coverage 本轮 68 项中 67 项通过，唯一失败为沙箱 socket 权限；包构建成功，未启用 CAN 或运动控制。
-- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff；若收到 DBC、下位机源码或 `candump -L`，先用现有审计做离线回放对照，再讨论任何现场 CAN 操作授权。
+- Edge cases found: 81（在历史 80 项基础上新增归档文档旧路径引用；corridor 元数据缺失和未显式授权的局部 odom frame 仍已覆盖）。
+- Verification status: 新增 loader/定位健康/单对象采集纯 Python 核心及 23 项模型回归通过；mower_coverage 本轮 68 项中 67 项通过，唯一失败为沙箱 socket 权限；本轮文档根目录收敛为 3 份，旧路径审计和 `git diff --check` 通过；未启用 CAN 或运动控制。
+- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff，再读 `docs/remote-capture-mission-plan.md`；若收到 DBC、下位机源码或 `candump -L`，先用现有审计做离线回放对照，再讨论任何现场 CAN 操作授权。
 
 ## Historical Handoff（历史交接记录）
 
@@ -306,10 +309,10 @@
 
 ## Active Handoff（当前交接进度）
 
-- 当前教学交付：已建立 `MISSION.md`、RTK 领导演示 lesson、现场速查表、300 秒静态验收结果卡和学习记录；演示只启动 `mower_rtk` 只读 profile，不启动 CAN、规划器、执行器、电机或 `/cmd_vel`。为避免把 CORS 密码打印到终端，教学命令统一使用 `docker compose config -q`。
+- 当前教学交付：已建立 `docs/operations/rk3588-rtk-demo.md`、RTK 领导演示 lesson、现场速查表、300 秒静态验收结果卡和学习记录；演示只启动 `mower_rtk` 只读 profile，不启动 CAN、规划器、执行器、电机或 `/cmd_vel`。为避免把 CORS 密码打印到终端，教学命令统一使用 `docker compose config -q`。
 - 发布状态：提交 `e14b76f` 已推送到 `origin/fix/web-launch-obstacle-planning`；工作树在推送时干净。按当前请求仅完成分支推送，未创建 Draft PR。
 - 当前状态：Fixed-only 统计、单串口 `rtk_ntrip_node`、CORS 断流/恢复、容器重启和物理 USB 重新枚举均已完成；未启动 CAN、规划器、执行器或 `/cmd_vel`。
-- 本轮最终提交：`f1767de Harden mission compatibility boundaries`（前置核心提交 `812eb10`）；已包含 `CONTEXT.md`、纯任务模型/loader/capture、定位健康评估和对应回归。当前未推送新提交，工作树干净。
+- 本轮最终提交：`688c5a9 Harden mission compatibility boundaries`（前置核心提交 `812eb10`）；已包含 `docs/domain/remote-capture-context.md`、纯任务模型/loader/capture、定位健康评估和对应回归。当前未推送新提交，文档整理修改尚未提交。
 - 最新 300 秒静态结果：RTCM `273681` 字节，300/300 条 GGA 为 RTK Fixed，首次 Fixed `0.7s`；Fixed-only 标准差 east `0.008m`、north `0.010m`、radial `0.008m`，最长连续 Fixed `299.0s`；相对首个 Fixed 最大偏差 `0.112m`，对外口径为厘米量级静态重复性。
 - CORS 断流策略：RTCM 超过 15 秒未更新即 `corrections_fresh=false`、`global_position_trusted=false`；解除临时规则后节点自动重连并恢复 `RTK_FIXED` 和可信全局定位。
 - USB 重新枚举结果：Prolific by-id 恢复并指向 `/dev/ttyUSB0`；节点日志经历 `SERIAL_UNAVAILABLE → NO_FIX → SINGLE → DGPS → RTK_FIXED`，容器 `RestartCount=0`，最终状态 `corrections_fresh=true`、`global_position_trusted=true`、`invalid_gga=0`。
@@ -320,9 +323,9 @@
 - 2026-07-20 用户已确认空间规则：作业区不重叠但可边界相接；禁区可重叠并整体约束；作业区/通道不得穿过禁区；通道必须连接两个作业区；规划前可调整对象执行顺序。
 - 2026-07-20 模型澄清：禁区不进入执行顺序；执行顺序只覆盖作业区和连接通道，禁区始终作为全局约束参与校验和规划。
 - 2026-07-20 当前会话边界：只读盘点已完成；本轮仅新增纯 Python 领域模型/兼容 loader/单对象采集状态机/定位健康评估与测试，未启动 ROS/Gazebo、CAN、容器、规划器、执行器或任何运动控制。
-- 2026-07-20 待确认产品细节：真实机器人包络、安全余量和现场标定；仿真使用约 `0.46m × 0.40m` 包络及当前临时 profile，不代替实机测量；已创建根目录 `CONTEXT.md` 记录已确认通用语言。
+- 2026-07-20 待确认产品细节：真实机器人包络、安全余量和现场标定；仿真使用约 `0.46m × 0.40m` 包络及当前临时 profile，不代替实机测量；已创建 `docs/domain/remote-capture-context.md` 记录已确认通用语言。
 - 2026-07-20 实现进度：用户已确认三个公开 seam；几何生成、全局禁区扣除、任务关系校验、通道安全校验和旧 YAML 转换已按 red→green 完成；当前 23 项模型回归通过，包级 68 项中 67 项通过，唯一失败为沙箱 socket 权限。
-- 当前工作区实况：分支 `fix/web-launch-obstacle-planning`，HEAD `f1767de`；本轮提交后工作树干净。
+- 当前工作区实况：分支 `fix/web-launch-obstacle-planning`，HEAD `688c5a9`；文档整理后工作树包含待提交的移动、合并和链接修正。
 - 2026-07-20 当前会话实现：新增 `mission/loader.py` 的 `load_mission_data/load_mission_file/mission_to_legacy_areas`，旧 `areas` 自动转换为全局禁区模型；loader 回归现为 7 项，模型异常输入回归现为 23 项。
 - 2026-07-20 当前会话决策：旧多区域 loader/规划器通过显式适配消费无 corridor 的新任务；全局禁区转换为每个旧作业区的 `inner_rings`，包含 corridor 的任务 fail-closed，通道不会被丢弃。
 - 2026-07-20 当前会话实现：新增 `localization/health.py` 的 `assess_localization()`；6 项回归覆盖 GREEN、RTK 丢失 YELLOW、Mid-360/点云/地图位姿 RED 和 malformed input fail-closed。当前未接 ROS 话题或发布健康消息。
@@ -331,3 +334,4 @@
 - 2026-07-20 当前会话接线：`mission/multi_area_definer.py` 和 `planning/hill_boustrophedon.py` 读取 YAML 时统一经过 loader；新任务含 corridor 时旧消费链明确失败，不会静默丢弃通道。
 - 2026-07-20 最终审查状态：初次 Standards/Spec review 提出的顺序缺失、旧 loader 未接线、corridor 元数据缺失和局部 odom 未显式授权均已修复；几何补偿/真实 profile 与 ROS/Web 适配属于明确后续项。
 - 下一窗口：先为 `/localization/health` 监测适配器补充配置化阈值，再接 Web 采集向导；定位健康阈值、真实机器人包络/补偿、CAN/急停/遥控接管和 Mid-360 安全验收未完成前，不启动实机运动。
+- 2026-07-20 文档整理完成：根目录保留 `README.md`、`CLAUDE.md` 和本文件；当前领域上下文、RTK 演示资料已归位，旧操作指南和旧 Claude overview 已归档。下一窗口先阅读本文件的 Active Handoff 与 `docs/remote-capture-mission-plan.md`。

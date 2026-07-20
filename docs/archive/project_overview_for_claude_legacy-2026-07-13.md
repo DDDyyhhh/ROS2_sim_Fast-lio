@@ -1,8 +1,7 @@
 # 自动割草机项目交接文档
 
-> 当前主交接文档。给完全没有上下文的新会话使用。  
-> 若本文与旧 overview 文档冲突，以本文和 `CLAUDE.md` 为准。  
-> 项目目标：Web/地图画区域 → ROS2 自动规划全覆盖路径 → 仿真/实车沿路径割草。
+> 历史交接文档（最后更新于 2026-07-13），保留用于追溯当时的软件闭环规划。文中“硬件未到货”等状态已经过时。
+> 当前实施状态请以根目录 [`implementation-notes.md`](../../implementation-notes.md)、[`CLAUDE.md`](../../CLAUDE.md) 和任务计划为准。
 
 ---
 
@@ -201,10 +200,10 @@ docs/daily/2026-07-09.md
 
 ### 3.4 交接文档整理
 
-当前主交接文档：
+当时的主交接文档：
 
 ```text
-project_overview_for_claude.md
+implementation-notes.md
 CLAUDE.md
 ```
 
@@ -457,10 +456,10 @@ docs/archive/project_overview_for_gemini_legacy_2026-07-02.md
 
 它是历史参考，不是当前交接文档。
 
-当前以这两个为准：
+当前不再以本文为准；现在以这两个为准：
 
 ```text
-project_overview_for_claude.md
+implementation-notes.md
 CLAUDE.md
 ```
 

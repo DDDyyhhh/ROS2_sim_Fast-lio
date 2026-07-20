@@ -3,7 +3,7 @@
 - 基线分支：`fix/web-launch-obstacle-planning`
 - 基线提交：`87e8b9485fc52cd5ca8cafd38bbfe8a59d4f332d`
 - 远端关系：比 `origin/fix/web-launch-obstacle-planning` 领先 4 个提交
-- 保留的用户修改：`CLAUDE.md`、`project_overview_for_claude.md`
+- 2026-07-13 当时保留的用户修改：`CLAUDE.md`、`project_overview_for_claude.md`；后者已在 2026-07-20 下沉到 `docs/archive/`，当前交接由根目录 `implementation-notes.md` 承担。
 - 已清理的重复工具状态：`.agents/`、`.superpowers/`、`docs/superpowers/plans/`、`skills-lock.json`
 - ROS 包：`fast_lio`、`outdoor_sim`、`mower_coverage`
 - 外部 worktree：`/home/yh/mower_ws-worktrees/`

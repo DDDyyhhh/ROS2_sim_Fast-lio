@@ -16,6 +16,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - The Git repository and active ROS workspace root are both `/home/yh/mower_ws`.
 - Source of truth is under `src/`; do not edit generated `build/`, `install/`, or `log/` artifacts.
 - ROS package names are `fast_lio`, `outdoor_sim`, and `mower_coverage`; use these names with `--packages-select`.
+- Current implementation handoff is `implementation-notes.md`; the remote-capture product plan is `docs/remote-capture-mission-plan.md`.
+- Current ROS launch profiles are documented in `docs/operations/profiles.md`; archived overview and legacy operation documents are under `docs/archive/`.
 
 ## Common Commands
 

@@ -21,3 +21,16 @@
 - 遥控采集作业区、禁区和跨区通道的实机运动。
 - Mid-360 降级运动策略的现场验收。
 - CAN 控制协议和电机动作。
+
+## 现场资料
+
+- [RK3588 RTK 部署说明](../../deploy/rk3588/README.md) — 镜像、Compose、环境变量和只读验证命令。
+- [RTK 状态与实施交接](../../implementation-notes.md) — 当前验收证据、状态门槛和安全边界；不能替代现场输出。
+- [UM982 用户手册](../hardware/um982/UM982_User_Manual.pdf) — 接收机串口、NMEA LOG 和配置命令的原始资料。
+- [ROS 2 Humble command-line tools](https://docs.ros.org/en/humble/Concepts/Basic/About-Command-Line-Tools.html) — 官方命令行工具说明。
+
+现场问题优先回到 RK3588 日志、`/rtk/status` 和实施交接证据；本演示不依赖社区操作。
+
+## 已知缺口
+
+目前没有领导专用的产品演示评分表；现场讲解以“链路连接、Fixed 解、数据新鲜度、无运动风险”四个可观察维度为准。

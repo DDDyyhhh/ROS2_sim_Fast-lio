@@ -10,11 +10,14 @@
 > 四驱差速小车 + 32线 LiDAR + 200Hz IMU + FAST-LIO SLAM + **Nav2 自主导航**
 > 支持两种工作模式：纯导航（预建地图 + AMCL）与 SLAM+导航（未知环境探索）
 
+当前任务交接与新增遥控采集模型请先阅读 [`implementation-notes.md`](implementation-notes.md) 和 [`docs/remote-capture-mission-plan.md`](docs/remote-capture-mission-plan.md)。
+
 ---
 
 ## 目录
 
 - [项目概述](#项目概述)
+- [文档入口](#文档入口)
 - [硬件要求](#硬件要求)
 - [软件技术栈](#软件技术栈)
 - [快速开始](#快速开始)
@@ -48,6 +51,14 @@
   - **模式 B**：SLAM+导航 — 未知环境同时建图与导航，FAST-LIO 实时里程计驱动 Nav2
 
 所有配置针对 **ARM64 架构** 深度优化，绕开了 RK3588 Mali-G610 GPU 驱动问题和多核编译死锁风险。
+
+## 文档入口
+
+- [当前实施交接](implementation-notes.md) — 最新实现进度、验证证据和安全边界。
+- [遥控采集任务计划](docs/remote-capture-mission-plan.md) — 作业区、禁区和连接通道的产品边界。
+- [遥控采集领域上下文](docs/domain/remote-capture-context.md) — 领域术语与空间规则。
+- [当前 ROS 启动 Profiles](docs/operations/profiles.md) — Web 最小闭环和完整传感器闭环。
+- [RK3588 RTK 演示](docs/operations/rk3588-rtk-demo.md) — 只读演示目标、约束和现场资料。
 
 ---
 
@@ -366,11 +377,12 @@ my_3d_map.pgm + my_3d_map.yaml (Nav2 map_server)
 │   │   ├── launch/ + src/ + include/
 │   │   └── package.xml
 │   │
-│   ├── pcd_to_pgm.py                         # PCD→PGM 转换
-│   └── CLAUDE.md + project_overview_for_gemini.md
+│   └── pcd_to_pgm.py                         # PCD→PGM 转换
 │
-├── build/ install/ log/                      # gitignored
-└── README.md                                 ← 本文件
+├── docs/                                     # 当前契约、计划、操作指南和历史归档
+├── CLAUDE.md                                 # Claude Code 工作规则
+├── implementation-notes.md                   # 当前实施交接
+└── README.md                                 # 本文件
 ```
 
 ---

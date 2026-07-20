@@ -1,7 +1,7 @@
 # Orange Pi 5 Plus — Autonomous Lawn Mower Coverage Planning Project
 
 > Legacy archive. This document reflects the older 2026-07-02 Phase 0/1 design and may be stale.  
-> For current handoff, use `project_overview_for_claude.md` and `CLAUDE.md`.  
+> For current handoff, use [`implementation-notes.md`](../../implementation-notes.md), [`CLAUDE.md`](../../CLAUDE.md), and the current mission plan.
 > **给 Gemini 架构师的项目总览文档**  
 > 目标：在仿真环境中验证自动割草机的全覆盖路径规划（牛耕式），后续部署到实车。
 
