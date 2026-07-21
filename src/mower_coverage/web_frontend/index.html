@@ -40,9 +40,30 @@
         .toast-info { background: #3a4a6e; color: #fff; }
         .toast-success { background: #0f9; color: #111; }
         .toast-error { background: #f44; color: #fff; }
+        #capture-panel { position: fixed; left: 12px; right: 12px; bottom: 58px; z-index: 900; background: rgba(22,33,62,0.95); border: 1px solid #45618e; border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
+        .capture-title { color: #0f9; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+        .capture-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .capture-row input, .capture-row select { background: #101a32; color: #eee; border: 1px solid #506b98; border-radius: 4px; padding: 5px 7px; min-width: 90px; }
+        .capture-row label { font-size: 12px; color: #ddd; display: inline-flex; align-items: center; gap: 4px; }
+        .capture-bottom-row { margin-top: 6px; justify-content: space-between; }
+        #capture-state-text { color: #ffcc00; font-size: 12px; min-width: 140px; }
+        #mission-object-list { color: #ddd; font-size: 12px; flex: 1; min-width: 180px; }
+        #teleop-pad { display: grid; grid-template-columns: repeat(3, 36px); grid-template-rows: repeat(3, 30px); gap: 3px; }
+        .teleop-btn { padding: 0; border: 1px solid #6484b8; border-radius: 4px; background: #2a3a5e; color: #fff; cursor: pointer; touch-action: none; user-select: none; }
+        .teleop-btn:nth-child(1) { grid-column: 2; grid-row: 1; }
+        .teleop-btn:nth-child(2) { grid-column: 1; grid-row: 2; }
+        .teleop-btn:nth-child(3) { grid-column: 2; grid-row: 2; }
+        .teleop-btn:nth-child(4) { grid-column: 3; grid-row: 2; }
+        .teleop-btn:nth-child(5) { grid-column: 2; grid-row: 3; }
+        .teleop-btn:active, .teleop-btn.active { background: #0f9; color: #111; }
+        .teleop-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .rtk-marker, .sim-marker { font-size: 12px; font-weight: 700; white-space: nowrap; }
         @media (max-width: 600px) {
             #header h1 { font-size: 14px; }
             .btn { padding: 8px 12px; font-size: 12px; }
+            #capture-panel { bottom: 74px; }
+            #capture-panel .btn { padding: 6px 8px; }
+            #mission-object-list { flex-basis: 100%; }
         }
     </style>
 </head>
@@ -51,7 +72,10 @@
         <h1>🚜 自动割草机</h1>
         <div id="status-bar">
             <span id="ros-status"><span class="status-dot disconnected"></span>未连接</span>
-            <span id="gps-status">🛰️ --</span>
+            <span id="gps-status">🛰️ 仿真GNSS: --</span>
+            <span id="sim-pose-status">🤖 仿真位姿: --</span>
+            <span id="rtk-status">📡 RTK天线: 未连接</span>
+            <span id="localization-status">🛡️ 定位: --</span>
             <span id="coverage-display">📊 --%</span>
             <span id="mode-display">⚙️ --</span>
             <span id="debug-coords" style="font-size:11px;color:#888;font-family:monospace;"></span>
@@ -61,6 +85,41 @@
     <div id="toast-container"></div>
 
     <div id="map"></div>
+
+    <section id="capture-panel" aria-label="遥控采集">
+        <div class="capture-title">🧭 遥控采集（仅仿真）</div>
+        <div class="capture-row">
+            <select id="capture-type" aria-label="采集对象类型">
+                <option value="work_area">作业区</option>
+                <option value="no_go_zone">禁区</option>
+                <option value="corridor">通道</option>
+            </select>
+            <input id="capture-id" type="text" placeholder="对象名称（可选）" maxlength="40">
+            <button id="btn-capture-start" class="btn btn-primary">▶ 开始采集</button>
+            <button id="btn-capture-finish" class="btn btn-secondary" disabled>⏹ 完成</button>
+            <button id="btn-capture-undo" class="btn btn-secondary" disabled>↩ 撤销一点</button>
+            <button id="btn-capture-draft" class="btn btn-warning" disabled>📝 保存草稿</button>
+            <button id="btn-capture-confirm" class="btn btn-primary" disabled>✅ 确认对象</button>
+            <button id="btn-capture-cancel" class="btn btn-danger" disabled>✖ 取消</button>
+        </div>
+        <div id="corridor-fields" class="capture-row" hidden>
+            <label>通道宽度 <input id="corridor-width" type="number" min="0.1" step="0.1" value="1.0"></label>
+            <label>起点作业区 <input id="corridor-from" type="text" placeholder="work-area-1"></label>
+            <label>终点作业区 <input id="corridor-to" type="text" placeholder="work-area-2"></label>
+            <label><input id="corridor-bidirectional" type="checkbox" checked> 双向</label>
+        </div>
+        <div class="capture-row capture-bottom-row">
+            <div id="capture-state-text">未开始采集</div>
+            <div id="mission-object-list">暂无已确认对象</div>
+            <div id="teleop-pad" aria-label="方向遥控">
+                <button class="teleop-btn" data-linear="0.35" data-angular="0" aria-label="前进">▲</button>
+                <button class="teleop-btn" data-linear="0" data-angular="0.9" aria-label="左转">◀</button>
+                <button id="teleop-stop" class="teleop-btn teleop-stop" data-linear="0" data-angular="0" aria-label="停止">■</button>
+                <button class="teleop-btn" data-linear="0" data-angular="-0.9" aria-label="右转">▶</button>
+                <button class="teleop-btn" data-linear="-0.25" data-angular="0" aria-label="后退">▼</button>
+            </div>
+        </div>
+    </section>
 
     <div id="footer">
         <!-- 绘图模式切换 -->

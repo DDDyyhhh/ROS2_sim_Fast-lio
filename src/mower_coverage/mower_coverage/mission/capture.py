@@ -3,7 +3,7 @@
 from copy import deepcopy
 from math import isfinite
 
-from .model import derive_effective_geometry
+from .model import GeometryResult, derive_effective_geometry
 
 
 _OBJECT_TYPES = {'work_area', 'no_go_zone', 'corridor'}
@@ -55,10 +55,16 @@ class CaptureSession:
         self.state = 'capturing'
         return self.snapshot()
 
-    def finish(self):
+    def finish(self, current_health_state=None):
         """Derive geometry; unhealthy or invalid captures remain drafts."""
         if self.state not in {'capturing', 'draft'}:
             raise RuntimeError('capture session is not capturing')
+
+        self._validate_health_state(current_health_state)
+        if (current_health_state is not None
+                and current_health_state != 'GREEN'):
+            self._mark_unhealthy(current_health_state, 'finish')
+            return self.snapshot()
 
         self._result = derive_effective_geometry(
             self._raw_trajectory,
@@ -94,10 +100,17 @@ class CaptureSession:
             raise RuntimeError('capture session has no editable draft')
         return self._mission_object('draft')
 
-    def confirm(self):
+    def confirm(self, current_health_state=None):
         """Promote a geometrically ready capture to a confirmed object."""
         if self.state != 'ready':
             raise RuntimeError('capture can be confirmed only when ready')
+        self._validate_health_state(current_health_state)
+        if (current_health_state is not None
+                and current_health_state != 'GREEN'):
+            self._mark_unhealthy(current_health_state, 'confirm')
+            raise RuntimeError(
+                f'capture cannot be confirmed while localization is '
+                f'{current_health_state}')
         if self.object_type == 'corridor' and not self._corridor_metadata:
             raise RuntimeError('corridor metadata is required before confirmation')
         self.state = 'confirmed'
@@ -198,3 +211,16 @@ class CaptureSession:
             raise ValueError('localization_ok must be boolean')
 
         return normalized
+
+    def _validate_health_state(self, health_state):
+        if health_state is not None and health_state not in _HEALTH_STATES:
+            raise ValueError('unknown localization state')
+
+    def _mark_unhealthy(self, health_state, phase):
+        self._result = GeometryResult(
+            'draft',
+            (),
+            (f'localization is {health_state} at {phase}',),
+            tuple(self._raw_trajectory),
+        )
+        self.state = 'draft'

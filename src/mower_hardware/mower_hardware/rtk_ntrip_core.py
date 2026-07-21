@@ -225,10 +225,12 @@ class RtkHealth:
         self,
         stale_after_s: float = 3.0,
         correction_timeout_s: float = 15.0,
+        source: str = "hardware_um982",
     ) -> None:
         self._lock = Lock()
         self.stale_after_s = stale_after_s
         self.correction_timeout_s = correction_timeout_s
+        self.source = source
         self.serial_state = "DISCONNECTED"
         self.ntrip_state = "DISABLED"
         self.last_error: str | None = None
@@ -333,6 +335,8 @@ class RtkHealth:
                 and corrections_fresh
             )
             return {
+                "source": self.source,
+                "simulated": False,
                 "state": state,
                 "solution": solution,
                 "quality": quality,

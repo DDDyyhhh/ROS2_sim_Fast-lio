@@ -40,6 +40,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time", default="true")
     world_path = LaunchConfiguration("world", default=world_file)
     with_odom_to_tf = LaunchConfiguration("with_odom_to_tf", default="true")
+    cmd_vel_topic = LaunchConfiguration("cmd_vel_topic", default="/cmd_vel")
 
     declare_use_sim_time = DeclareLaunchArgument(
         "use_sim_time",
@@ -54,6 +55,10 @@ def generate_launch_description():
     declare_with_odom_to_tf = DeclareLaunchArgument(
         "with_odom_to_tf", default_value="true",
         description="转发 /odom 为 TF；EKF profile 应关闭以避免重复 odom→body",
+    )
+    declare_cmd_vel_topic = DeclareLaunchArgument(
+        "cmd_vel_topic", default_value="/cmd_vel",
+        description="ROS command topic bridged to the simulation only",
     )
 
     # ------------------------------------------------------------------
@@ -130,7 +135,7 @@ def generate_launch_description():
         remappings=[
             ('/clock', '/clock_raw'),
             ('/lidar/points/points', '/velodyne_points'),
-            ('/model/outdoor_bot/cmd_vel', '/cmd_vel'),
+            ('/model/outdoor_bot/cmd_vel', cmd_vel_topic),
             ('/gps/fix', '/gps/fix'),
             ('/world/hill_terrain_30x30/model/outdoor_bot/joint_state', '/joint_states'),
         ],
@@ -176,6 +181,7 @@ def generate_launch_description():
         declare_use_sim_time,
         declare_world,
         declare_with_odom_to_tf,
+        declare_cmd_vel_topic,
         gz_sim,
         robot_state_pub,
         create_entity,

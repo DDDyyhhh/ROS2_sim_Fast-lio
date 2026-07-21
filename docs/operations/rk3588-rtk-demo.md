@@ -8,7 +8,7 @@
 
 - 能在 RK3588 上安全启动正式 RTK 只读 profile。
 - 能解释 `/rtk/status` 中 `RTK_FIXED`、`ntrip=CONNECTED` 和 `global_position_trusted=true` 的含义。
-- 能用 `/gps/fix` 频率、卫星数、HDOP 和 RTCM 字节数回答领导的现场问题。
+- 能用 `/rtk/gps/fix` 频率、卫星数、HDOP 和 RTCM 字节数回答领导的现场问题。
 
 ## Constraints
 

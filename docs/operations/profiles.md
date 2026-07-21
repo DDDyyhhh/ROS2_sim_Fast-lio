@@ -16,6 +16,14 @@ ros2 launch mower_coverage sensor_full.launch.py
 
 复用 `outdoor_sim/hill_full.launch.py`，启动仿真传感器、FAST-LIO、EKF、LaserScan、Web、规划和执行。
 
+## 遥控采集仿真
+
+```bash
+ros2 launch mower_coverage remote_capture_sim.launch.py
+```
+
+启动 Gazebo、仿真 GNSS/RTK 天线状态、rosbridge、Web 和遥控采集向导；不启动规划器、执行器、CAN 或实机运动。方向遥控经 `/teleop/cmd_vel` 的 dead-man/超时门禁后只发布到仿真私有的 `/simulation/cmd_vel`，再由本 profile 的 Gazebo bridge 接收。
+
 ## 旧入口
 
 原有 `ros2 run mower_coverage ...` 和以下 launch 继续保留：

@@ -83,7 +83,24 @@ def derive_effective_geometry(raw_trajectory, object_type, profile):
         return GeometryResult(
             'invalid', (), ('trajectory is not close to its start',), samples)
 
-    polygon = Polygon(points[:-1] + (points[0],))
+    # The robot keeps publishing odometry after the user releases the
+    # direction control.  Normalize a near-closed endpoint and collapse those
+    # stationary samples for effective geometry; raw evidence remains intact.
+    closed_points = list(points)
+    while (len(closed_points) > 1
+           and hypot(closed_points[-1][0] - points[0][0],
+                    closed_points[-1][1] - points[0][1]) <= closure_tolerance):
+        closed_points.pop()
+    closed_points.append(points[0])
+    filtered_points = [closed_points[0]]
+    for point in closed_points[1:]:
+        if hypot(point[0] - filtered_points[-1][0],
+                 point[1] - filtered_points[-1][1]) > simplify_tolerance:
+            filtered_points.append(point)
+    if filtered_points[-1] != filtered_points[0]:
+        filtered_points.append(filtered_points[0])
+
+    polygon = Polygon(filtered_points)
     polygon = polygon.simplify(simplify_tolerance, preserve_topology=True)
     if not polygon.is_valid or polygon.area <= 0.0:
         return GeometryResult(

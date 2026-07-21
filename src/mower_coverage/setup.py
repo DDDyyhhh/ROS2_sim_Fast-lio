@@ -46,6 +46,9 @@ setup(
             'coverage_demo = mower_coverage.legacy.coverage_demo:main',
             # === 斜坡场景 + 多区域新增节点 ===
             'multi_area_definer = mower_coverage.mission.multi_area_definer:main',
+            'remote_capture_node = mower_coverage.mission.remote_capture_node:main',
+            'simulation_teleop = mower_coverage.sim_teleop_node:main',
+            'simulation_rtk = mower_coverage.sim_rtk_node:main',
             'hill_boustrophedon = mower_coverage.planning.hill_boustrophedon:main',
             'multi_area_executor = mower_coverage.execution.multi_area_executor:main',
             'web_server = mower_coverage.adapters.web_server:main',

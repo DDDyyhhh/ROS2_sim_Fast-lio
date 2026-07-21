@@ -38,11 +38,20 @@ const state = {
     robotPose: null,     // { lat, lng }
     robotMarker: null,   // Leaflet marker for robot
     pathLine: null,      // Leaflet polyline for coverage path
+    captureLine: null,   // 当前遥控采集原始轨迹
+    antennaMarker: null, // 真实 RTK 天线位置（与仿真机器人分开）
+    missionItems: null,  // 已确认对象/草稿图层
     coveragePercent: 0,
     robotMode: 'idle',
     execMode: 'idle',        // 'executing' | 'paused' | 'stopped' | 'idle'
     rosSubscribed: false, // 是否已订阅 ROS 话题（防重复订阅）
     _odomReceived: false, // 是否收到过 odom 数据
+    captureState: null,
+    mission: { objects: [], drafts: [], order: [] },
+    rtkStatus: null,
+    realRtkFix: null,
+    captureCommandTopic: null,
+    teleopTopic: null,
     drawMode: 'area',     // 'area' | 'obstacle'
     _wasExecuting: false, // 上次执行状态（用于检测完成）
 };
@@ -101,6 +110,18 @@ state.robotMarker = L.marker(CONFIG.initialCenter, {
     zIndexOffset: 1000,
 }).addTo(map);
 
+const antennaIcon = L.divIcon({
+    className: 'rtk-marker',
+    html: '<div style="background:#4488ff;color:#fff;border:2px solid #fff;border-radius:12px;padding:3px 6px;box-shadow:0 0 10px rgba(68,136,255,0.8);">RTK</div>',
+    iconSize: [42, 24],
+    iconAnchor: [21, 12],
+});
+state.antennaMarker = L.marker(CONFIG.initialCenter, {
+    icon: antennaIcon,
+    zIndexOffset: 900,
+    opacity: 0.0,
+}).addTo(map);
+
 // 路径图层（显示规划的全覆盖路径）
 state.pathLine = L.polyline([], {
     color: '#ffcc00',
@@ -108,6 +129,14 @@ state.pathLine = L.polyline([], {
     opacity: 0.8,
     dashArray: '8, 6',
 }).addTo(map);
+
+state.captureLine = L.polyline([], {
+    color: '#00ddff',
+    weight: 4,
+    opacity: 0.95,
+}).addTo(map);
+state.missionItems = new L.FeatureGroup();
+map.addLayer(state.missionItems);
 
 // =============================================================
 // 绘图控制（Leaflet.draw）
@@ -239,16 +268,19 @@ function connectROS() {
             '<span class="status-dot connected"></span>已连接';
         document.getElementById('btn-send').disabled = false;
         setupROSSubscribers();
+        updateCaptureUI();
     });
 
     state.ros.on('close', function () {
         state.connected = false;
         state.rosSubscribed = false;  // 下次重连允许重新订阅
+        stopTeleop();
         document.getElementById('ros-status').innerHTML =
             '<span class="status-dot disconnected"></span>未连接';
         document.getElementById('btn-send').disabled = true;
         document.getElementById('btn-plan').disabled = true;
         document.getElementById('btn-execute').disabled = true;
+        updateCaptureUI();
     });
 
     state.ros.on('error', function (err) {
@@ -263,6 +295,17 @@ function setupROSSubscribers() {
     if (state.rosSubscribed) return;
     state.rosSubscribed = true;
 
+    state.captureCommandTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/mission/capture/command',
+        messageType: 'std_msgs/String',
+    });
+    state.teleopTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/teleop/cmd_vel',
+        messageType: 'geometry_msgs/Twist',
+    });
+
     // 1. 订阅 GPS 位置 → 显示 GPS 状态和调试坐标（不直接控制标记）
     const gpsTopic = new ROSLIB.Topic({
         ros: state.ros,
@@ -275,7 +318,7 @@ function setupROSSubscribers() {
         const status = msg.status?.status;
 
         // 更新状态文本
-        const statusText = status >= 0 ? '🛰️ GNSS定位有效' : '🛰️ 无定位';
+        const statusText = status >= 0 ? '🛰️ 仿真GNSS: 有效' : '🛰️ 仿真GNSS: 无定位';
         document.getElementById('gps-status').textContent = statusText;
 
         // 调试：显示原始 GPS 坐标
@@ -287,6 +330,100 @@ function setupROSSubscribers() {
             state.robotPose = { lat, lng };
             state.robotMarker.setLatLng([lat, lng]);
         }
+    });
+
+    // 1a. 真实 RTK 天线位置：与仿真机器人位置严格分开显示。
+    const realFixTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/rtk/gps/fix',
+        messageType: 'sensor_msgs/NavSatFix',
+    });
+    realFixTopic.subscribe(msg => {
+        const lat = Number(msg.latitude);
+        const lng = Number(msg.longitude);
+        const valid = Number.isFinite(lat) && Number.isFinite(lng)
+            && Math.abs(lat) > 1e-9 && Math.abs(lng) > 1e-9;
+        state.realRtkFix = valid ? { lat, lng } : null;
+        if (valid) {
+            state.antennaMarker.setLatLng([lat, lng]);
+            state.antennaMarker.setOpacity(1.0);
+            state.antennaMarker.bindTooltip(
+                `RTK 天线 · ${lat.toFixed(7)}, ${lng.toFixed(7)}`);
+        } else {
+            state.antennaMarker.setOpacity(0.0);
+        }
+        updateRealRtkStatus();
+    });
+
+    const rtkStatusTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/rtk/status',
+        messageType: 'std_msgs/String',
+    });
+    rtkStatusTopic.subscribe(msg => {
+        try {
+            state.rtkStatus = JSON.parse(msg.data);
+        } catch (error) {
+            state.rtkStatus = { state: 'INVALID', last_error: '状态消息不是 JSON' };
+        }
+        updateRealRtkStatus();
+    });
+
+    const healthTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/localization/health',
+        messageType: 'std_msgs/String',
+    });
+    healthTopic.subscribe(msg => {
+        try {
+            const data = JSON.parse(msg.data);
+            const stateText = data.state || '--';
+            const reasons = Array.isArray(data.reasons) ? data.reasons.join('; ') : '';
+            document.getElementById('localization-status').textContent =
+                `🛡️ 定位: ${stateText}${reasons ? ' · ' + reasons : ''}`;
+        } catch (error) {
+            document.getElementById('localization-status').textContent = '🛡️ 定位: 消息无效';
+        }
+    });
+
+    const captureStateTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/mission/capture/state',
+        messageType: 'std_msgs/String',
+    });
+    captureStateTopic.subscribe(msg => {
+        try {
+            state.captureState = JSON.parse(msg.data);
+            updateCaptureUI();
+        } catch (error) {
+            showToast('❌ 采集状态消息无效', 'error');
+        }
+    });
+
+    const missionTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/mission/capture/mission',
+        messageType: 'std_msgs/String',
+    });
+    missionTopic.subscribe(msg => {
+        try {
+            state.mission = JSON.parse(msg.data);
+            renderMissionItems();
+            updateCaptureUI();
+        } catch (error) {
+            showToast('❌ 任务消息无效', 'error');
+        }
+    });
+
+    const rawPathTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/mission/capture/raw_path',
+        messageType: 'nav_msgs/Path',
+    });
+    rawPathTopic.subscribe(msg => {
+        const latlngs = (msg.poses || [])
+            .map(p => approxLocalToGPS(p.pose.position.x, p.pose.position.y));
+        state.captureLine.setLatLngs(latlngs);
     });
 
     // 1b. 订阅 /odom → 实时更新机器人位置（odom 随机器人移动而变化）
@@ -302,6 +439,8 @@ function setupROSSubscribers() {
         state._odomReceived = true;
         state.robotPose = { lat, lng };
         state.robotMarker.setLatLng([lat, lng]);
+        document.getElementById('sim-pose-status').textContent =
+            `🤖 仿真位姿: ${x.toFixed(2)}, ${y.toFixed(2)}m`;
     });
 
     // 2. 订阅覆盖率统计和执行状态
@@ -369,6 +508,172 @@ function setupROSSubscribers() {
             // ★ 收到空路径 → 清除显示的路径线（路径已被清除/重新规划）
             state.pathLine.setLatLngs([]);
         }
+    });
+}
+
+function updateRealRtkStatus() {
+    const el = document.getElementById('rtk-status');
+    if (!el) return;
+    const status = state.rtkStatus;
+    const simulated = status && (
+        status.source === 'simulation' || status.simulated === true);
+    const label = simulated ? '仿真RTK天线' : '真实RTK天线';
+    if (!status) {
+        el.textContent = state.realRtkFix
+            ? `📡 ${label}: 已收到坐标，等待状态`
+            : '📡 RTK天线: 未连接';
+        return;
+    }
+    const solution = status.solution || status.state || 'UNKNOWN';
+    const ntrip = status.ntrip ? ` / ${status.ntrip}` : '';
+    const trusted = status.global_position_trusted ? ' / 已信任' : '';
+    const coordinates = state.realRtkFix
+        ? ` (${state.realRtkFix.lat.toFixed(6)},${state.realRtkFix.lng.toFixed(6)})`
+        : '';
+    el.textContent = `📡 ${label}: ${solution}${ntrip}${trusted}${coordinates}`;
+    if (['NO_FIX', 'SERIAL_UNAVAILABLE', 'INVALID'].includes(solution)) {
+        state.antennaMarker.setOpacity(0.0);
+    } else if (state.realRtkFix) {
+        state.antennaMarker.setOpacity(1.0);
+    }
+}
+
+function publishCaptureCommand(action, extra = {}) {
+    if (!state.connected || !state.captureCommandTopic) {
+        showToast('❌ 尚未连接仿真采集节点', 'error');
+        return false;
+    }
+    state.captureCommandTopic.publish(new ROSLIB.Message({
+        data: JSON.stringify({ action, ...extra }),
+    }));
+    return true;
+}
+
+function captureStart() {
+    const type = document.getElementById('capture-type').value;
+    const id = document.getElementById('capture-id').value.trim();
+    if (publishCaptureCommand('start', { type, id: id || undefined })) {
+        showToast(`▶ 已开始采集${captureTypeLabel(type)}`, 'info');
+    }
+}
+
+function captureFinish() {
+    if (publishCaptureCommand('finish')) {
+        showToast('⏹ 已完成轨迹采集，请检查几何后确认', 'info');
+    }
+}
+
+function captureUndo() {
+    if (publishCaptureCommand('undo')) showToast('↩ 已撤销最后一个采样点', 'info');
+}
+
+function captureSaveDraft() {
+    if (publishCaptureCommand('save_draft')) showToast('📝 已保存为草稿', 'success');
+}
+
+function captureCancel() {
+    stopTeleop();
+    if (publishCaptureCommand('cancel')) showToast('✖ 已取消当前采集', 'info');
+}
+
+function captureConfirm() {
+    const active = state.captureState && state.captureState.active;
+    const extra = {};
+    if (active && active.type === 'corridor') {
+        const width = Number(document.getElementById('corridor-width').value);
+        const from = document.getElementById('corridor-from').value.trim();
+        const to = document.getElementById('corridor-to').value.trim();
+        if (!Number.isFinite(width) || width <= 0 || !from || !to || from === to) {
+            showToast('❌ 请填写有效的通道宽度和两个不同作业区', 'error');
+            return;
+        }
+        extra.corridor = {
+            width,
+            from_work_area_id: from,
+            to_work_area_id: to,
+            bidirectional: document.getElementById('corridor-bidirectional').checked,
+        };
+    }
+    if (publishCaptureCommand('confirm', extra)) {
+        stopTeleop();
+        showToast('✅ 对象已确认并加入任务', 'success');
+    }
+}
+
+function captureTypeLabel(type) {
+    return ({ work_area: '作业区', no_go_zone: '禁区', corridor: '通道' })[type] || type;
+}
+
+function updateCaptureUI() {
+    const active = state.captureState && state.captureState.active;
+    const captureState = state.captureState || {};
+    const activeState = captureState.state || 'idle';
+    const hasActive = !!active;
+    const setDisabled = (id, disabled) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    };
+    setDisabled('btn-capture-start', !state.connected || hasActive);
+    setDisabled('btn-capture-finish', !hasActive || activeState !== 'capturing');
+    setDisabled('btn-capture-undo', !hasActive || !(active.raw_trajectory || []).length);
+    setDisabled('btn-capture-draft', !hasActive);
+    setDisabled(
+        'btn-capture-confirm',
+        !hasActive || activeState !== 'ready'
+            || captureState.health_state !== 'GREEN');
+    setDisabled('btn-capture-cancel', !hasActive);
+
+    const typeSelect = document.getElementById('capture-type');
+    typeSelect.disabled = hasActive;
+    document.getElementById('capture-id').disabled = hasActive;
+    const activeType = hasActive ? active.type : typeSelect.value;
+    document.getElementById('corridor-fields').hidden = activeType !== 'corridor';
+
+    const stateText = hasActive
+        ? `${captureTypeLabel(active.type)} · ${activeState} · ${(active.raw_trajectory || []).length} 点`
+        : '未开始采集';
+    const health = captureState.health_state ? ` · 定位 ${captureState.health_state}` : '';
+    document.getElementById('capture-state-text').textContent = stateText + health;
+
+    document.querySelectorAll('.teleop-btn').forEach(button => {
+        button.disabled = !captureState.drive_allowed || !state.connected;
+    });
+    renderMissionList();
+}
+
+function renderMissionList() {
+    const container = document.getElementById('mission-object-list');
+    if (!container) return;
+    const objects = (state.mission.objects || []).map(item => ({ ...item, _draft: false }));
+    const drafts = (state.mission.drafts || []).map(item => ({ ...item, _draft: true }));
+    const all = objects.concat(drafts);
+    if (!all.length) {
+        container.textContent = '暂无已确认对象';
+        return;
+    }
+    container.textContent = all.map(item =>
+        `${item._draft ? '📝' : '✅'}${captureTypeLabel(item.type)}:${item.id}`
+    ).join('  ');
+}
+
+function renderMissionItems() {
+    if (!state.missionItems) return;
+    state.missionItems.clearLayers();
+    const objects = (state.mission.objects || []).map(item => ({ ...item, _draft: false }));
+    const drafts = (state.mission.drafts || []).map(item => ({ ...item, _draft: true }));
+    objects.concat(drafts).forEach(item => {
+        const geometry = item.geometry || [];
+        if (geometry.length < 2) return;
+        const latlngs = geometry.map(point => approxLocalToGPS(point[0], point[1]));
+        const color = item._draft ? '#aaaaaa' : (
+            item.type === 'no_go_zone' ? '#ff2222' :
+            item.type === 'corridor' ? '#ff9900' : '#00ddff'
+        );
+        const layer = item.type === 'corridor'
+            ? L.polyline(latlngs, { color, weight: 4, dashArray: item._draft ? '5,5' : null })
+            : L.polygon(latlngs, { color, fillColor: color, fillOpacity: item._draft ? 0.08 : 0.2, dashArray: item._draft ? '5,5' : null });
+        layer.bindTooltip(`${item._draft ? '草稿' : '已确认'} · ${captureTypeLabel(item.type)} · ${item.id}`);
+        state.missionItems.addLayer(layer);
     });
 }
 
@@ -673,6 +978,58 @@ function updateSendButton() {
 // =============================================================
 // 按钮事件绑定
 // =============================================================
+let teleopInterval = null;
+let activeTeleopButton = null;
+
+function publishTeleop(linear, angular) {
+    if (!state.connected || !state.teleopTopic) return;
+    state.teleopTopic.publish(new ROSLIB.Message({
+        linear: { x: linear, y: 0, z: 0 },
+        angular: { x: 0, y: 0, z: angular },
+    }));
+}
+
+function stopTeleop() {
+    if (teleopInterval) {
+        clearInterval(teleopInterval);
+        teleopInterval = null;
+    }
+    if (activeTeleopButton) activeTeleopButton.classList.remove('active');
+    activeTeleopButton = null;
+    publishTeleop(0, 0);
+}
+
+function startTeleop(event) {
+    event.preventDefault();
+    const button = event.currentTarget;
+    if (button.disabled || !state.captureState || !state.captureState.drive_allowed) return;
+    stopTeleop();
+    activeTeleopButton = button;
+    button.classList.add('active');
+    const linear = Number(button.dataset.linear || 0);
+    const angular = Number(button.dataset.angular || 0);
+    publishTeleop(linear, angular);
+    teleopInterval = setInterval(() => publishTeleop(linear, angular), 100);
+}
+
+document.getElementById('btn-capture-start').addEventListener('click', captureStart);
+document.getElementById('btn-capture-finish').addEventListener('click', captureFinish);
+document.getElementById('btn-capture-undo').addEventListener('click', captureUndo);
+document.getElementById('btn-capture-draft').addEventListener('click', captureSaveDraft);
+document.getElementById('btn-capture-confirm').addEventListener('click', captureConfirm);
+document.getElementById('btn-capture-cancel').addEventListener('click', captureCancel);
+document.getElementById('capture-type').addEventListener('change', updateCaptureUI);
+document.querySelectorAll('.teleop-btn').forEach(button => {
+    button.addEventListener('pointerdown', startTeleop);
+    button.addEventListener('pointerup', stopTeleop);
+    button.addEventListener('pointercancel', stopTeleop);
+    button.addEventListener('pointerleave', stopTeleop);
+});
+window.addEventListener('blur', stopTeleop);
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopTeleop();
+});
+
 // 绘图模式切换
 document.getElementById('btn-mode-area').addEventListener('click', () => setDrawMode('area'));
 document.getElementById('btn-mode-obstacle').addEventListener('click', () => setDrawMode('obstacle'));
@@ -749,6 +1106,7 @@ function updateExecButtons() {
 }
 // 初始禁用
 updateExecButtons();
+updateCaptureUI();
 
 // =============================================================
 // 启动

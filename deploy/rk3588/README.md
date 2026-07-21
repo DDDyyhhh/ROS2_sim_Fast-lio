@@ -1,10 +1,10 @@
 # RK3588 UM982 只读部署
 
 这是第一阶段实机 profile。它只启动单一 `rtk_ntrip_node`：该节点独占 UM982
-串口，同时读取 NMEA、向 CORS 写入 RTCM，并发布 `/gps/fix`、`/rtk/status`、
+串口，同时读取 NMEA、向 CORS 写入 RTCM，并发布 `/rtk/gps/fix`、`/rtk/status`、
 `/rtk/nmea`。它不启动仿真、FAST-LIO、规划器、执行器、CAN 或电机控制。
 
-`/gps/fix` 的 `NavSatStatus` 只表示 GNSS 是否有有效 fix；RTK Fixed/Float
+`/rtk/gps/fix` 的 `NavSatStatus` 只表示 GNSS 是否有有效 fix；RTK Fixed/Float
 必须读取 `/rtk/status` 的 `solution`、`ntrip` 和
 `global_position_trusted`，不能从 `NavSatStatus.status` 推断。
 
@@ -81,7 +81,7 @@ docker exec mower-rkt bash -lc \
   'source /opt/ros/humble/setup.bash && source /opt/mower_ws/install/setup.bash && ros2 topic list'
 
 docker exec mower-rkt bash -lc \
-  'source /opt/ros/humble/setup.bash && source /opt/mower_ws/install/setup.bash && ros2 topic echo /gps/fix --once'
+  'source /opt/ros/humble/setup.bash && source /opt/mower_ws/install/setup.bash && ros2 topic echo /rtk/gps/fix --once'
 
 docker exec mower-rkt bash -lc \
   'source /opt/ros/humble/setup.bash && source /opt/mower_ws/install/setup.bash && ros2 topic echo /rtk/status --once'

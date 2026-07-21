@@ -140,6 +140,8 @@
 - 本轮建议已落实：保留每个区域已通过局部障碍检查的 `wp`，只对“前一区域末点 → 后一区域首个覆盖点”的 transit 连接做全局碰撞修复；不再对拼接后的所有区域路径统一流式调用 `_fix_obstacle_crossings()`，全局障碍物在连接前已收集。
 - 实机第一阶段必须先完成 RK3588 OS/架构、Docker Compose、UM982 串口路径、波特率和原始 NMEA 盘点；在此之前不能宣称 `/gps/fix` 运行态验收。
 - RTK 固定/浮点状态是否需要浏览器显示仍应通过独立 `/rtk/status` 契约确认；本轮不复用 `NavSatStatus.status` 猜测。
+- 仿真与真实 RTK 若进入同一个 ROS domain，必须显式关闭 `with_sim_rtk` 并保证 `/rtk/gps/fix`、`/rtk/status` 单一 publisher；当前 Web 会按 status source 标注来源，但不替多个来源做仲裁。
+- 仿真健康节点的 `GREEN` 是明确的 `simulation_local_odom` 简化契约，只覆盖 Gazebo GNSS fix 与 `/odom` 新鲜度；它不等同于真实融合 `map`、Mid-360、IMU 和点云健康，不能作为实机运动授权。
 - `code-review` 双轴代理两次等待均未返回报告，已关闭；主代理按同一 Standards/Spec 要求人工复核当前改动，未发现需要阻断提交的硬性问题。
 - 目标机 SSH 用户名尚未记录；完成远程 Docker 安装和串口探测前需要确认该非敏感连接信息。
 - SSH 用户名已确认是 `cat`；剩余阻塞是为 Codex 提供不含密码的 key-based SSH，或由用户在 WSL/RK3588 终端执行目标机命令。
@@ -176,6 +178,7 @@
 - 2026-07-20 用户已确认禁区语义：作业区原始边界可以包含禁区；有效覆盖几何为作业区扣除全部全局禁区；通道中心线及通行包络不得穿过禁区；作业区之间仍不能有面积重叠。
 - 仿真闭合/简化容差和安全余量已确认使用当前 profile 值；真实机器人包络、安全余量和现场标定仍待后续实机资料，不影响本轮离线模型验证。
 - TDD 测试 seam 已确认：本轮公开测试边界为 `derive_effective_geometry(raw_trajectory, object_type, profile)`、`validate_mission(mission, profile)` 和 `legacy_areas_to_mission(legacy_yaml)`；不测试私有几何函数、Shapely 实现细节或 ROS 节点内部状态。
+- 2026-07-20 新产品目标待澄清：用户希望浏览器仿真同时呈现 RTK 定位，并通过按住方向遥控采集多区域、禁区和通道；需区分纯仿真、真实 RTK 只读显示和真实传感器在环，不能把真实 RTK/Mid-360 与虚拟机器人位姿直接混为同一来源。
 
 # Verification evidence
 
@@ -265,14 +268,20 @@
 - 本轮真实 300 秒 Fixed-only 验收：`STOP_REASON=duration complete`、`RTCM_BYTES=263073`、`VALID_GGA=300`、`INVALID_GGA=0`、`GGA_QUALITY_COUNTS={4: 300}`；首次 Fixed `0.8s`，Fixed-only 标准差 east `0.003m`、north `0.011m`、radial `0.007m`，最长连续 Fixed `299.0s`。
 - 本轮最新真实 300 秒 Fixed-only 重测：`ELAPSED_S=300.1`、`RTCM_BYTES=273681`、`VALID_GGA=300`、`INVALID_GGA=0`、`GGA_QUALITY_COUNTS={4: 300}`；首次 Fixed `0.7s`，Fixed-only 标准差 east `0.008m`、north `0.010m`、radial `0.008m`，最长连续 Fixed `299.0s`。相对首个 Fixed 最大偏差为 `0.112m`，因此对外使用“厘米量级静态重复性”口径，不宣称 300 秒内每个样本均在 1cm 内。
 - 本轮真实 CORS 断流/恢复闭环：旧逻辑在 RTCM 停流但 TCP `ESTAB` 时错误保持信任；加入 15 秒 RTCM 新鲜度门禁后，阻断期间为 `ntrip=DISCONNECTED/corrections_fresh=false/global_position_trusted=false`，解除规则后自动重连并恢复 `RTK_FIXED`、`corrections_fresh=true`、`global_position_trusted=true`，恢复快照 `rtcm_bytes=86282`、`invalid_gga=0`。
+- 2026-07-21 本轮 RTK 主题统一：硬件只读节点默认发布 `/rtk/gps/fix`；Gazebo 的原始 `/gps/fix` 经 `simulation_rtk` 映射到同一规范 topic，并在 `/rtk/status` 标注 `source=simulation`，Web 根据 source 区分仿真/真实天线，禁止把仿真数据冒充 UM982。
+- 2026-07-21 本轮安全审查修复：仿真遥控不再发布全局 `/cmd_vel`，改用 `/simulation/cmd_vel`，仅由 `remote_capture_sim.launch.py` 的 bridge 接收；`remote_capture_node` 初始健康改为 `RED`，必须收到健康 `GREEN` 才允许运动和确认。
+- 2026-07-21 本轮当前健康门禁：`finish` 和 `confirm` 均重新检查当前健康；完成前若出现 RED 样本或完成时为非 GREEN，则保留 raw 轨迹、清空有效几何并退回草稿。运行态曾以 1 个 RED 样本阻断确认，证明门禁不是只测纯函数。
+- 2026-07-21 最终隔离运行证据：`ROS_DOMAIN_ID=77` 下 HTTP `8080=200`、rosbridge `9090`，`/rtk/status=RTK_FIXED/source=simulation/global_position_trusted=true`，`/rtk/gps/fix` frame=`gps_link`；`/simulation/cmd_vel` 只有 `simulation_teleop → ros_gz_bridge`，全局 `/cmd_vel` 为 Unknown topic。
+- 2026-07-21 最终任务证据：`/tmp/remote_capture_domain77_rtk.yaml` 中两个作业区、一个禁区、一个通道均为 `confirmed`，drafts 为空；order 为两个作业区+通道，禁区不入 order；通道为 `2.0m`、两个作业区端点、双向。WebSocket 实际收到完整 RTK status。
+- 2026-07-21 本轮验证：获准本地环境 `mower_coverage` 为 `78 passed`、`mower_hardware` 为 `23 passed`；`colcon build --symlink-install --packages-select mower_coverage outdoor_sim mower_hardware` 成功，Python/JS 语法和 `git diff --check` 通过；最终仿真进程已清理。
 
 # Summary
 
-- Deviations count: 32（在历史 31 项基础上新增用户确认的可逆文档归位；旧消费者适配对 corridor 的明确拒绝和定位健康阈值边界仍保留）。
+- Deviations count: 35（在历史 32 项基础上新增规范 RTK topic、仿真私有命令 topic 和初始 RED 健康门禁；均为可逆且明确标注来源的安全/契约修正）。
 - Most likely revisit: 下位机 CAN 协议与控制权归属尚未确认；需要在伙伴方案、总线接口和电机安全机制之间做明确 owner 决策，不能仅凭帧样本猜测控制协议。
-- Edge cases found: 81（在历史 80 项基础上新增归档文档旧路径引用；corridor 元数据缺失和未显式授权的局部 odom frame 仍已覆盖）。
-- Verification status: 新增 loader/定位健康/单对象采集纯 Python 核心及 23 项模型回归通过；mower_coverage 本轮 68 项中 67 项通过，唯一失败为沙箱 socket 权限；本轮文档根目录收敛为 3 份，旧路径审计和 `git diff --check` 通过；未启用 CAN 或运动控制。
-- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff，再读 `docs/remote-capture-mission-plan.md`；若收到 DBC、下位机源码或 `candump -L`，先用现有审计做离线回放对照，再讨论任何现场 CAN 操作授权。
+- Edge cases found: 84（在历史 81 项基础上新增仿真健康瞬时 RED、ROS CLI 单次命令丢失和旧 Gazebo 子进程孤立；均已通过重复发布/清理和 fail-closed 行为处理）。
+- Verification status: `mower_coverage` 78/78、`mower_hardware` 23/23 通过；三包构建、Python/JS 语法和 `git diff --check` 通过；隔离 Web/rosbridge/RTK/多对象任务证据已留存；未启用 CAN、规划器、执行器或实机运动。
+- Next session should read first: 本文件的 Questions for review、Verification evidence 与 Active Handoff，再读 `docs/remote-capture-mission-plan.md`；真实 RTK 与仿真 Web 同域时必须显式 `with_sim_rtk:=false` 并保证 `/rtk/gps/fix` 单一 owner，然后再开 Mid-360 只读 bring-up。
 
 ## Historical Handoff（历史交接记录）
 
@@ -310,9 +319,9 @@
 ## Active Handoff（当前交接进度）
 
 - 当前教学交付：已建立 `docs/operations/rk3588-rtk-demo.md`、RTK 领导演示 lesson、现场速查表、300 秒静态验收结果卡和学习记录；演示只启动 `mower_rtk` 只读 profile，不启动 CAN、规划器、执行器、电机或 `/cmd_vel`。为避免把 CORS 密码打印到终端，教学命令统一使用 `docker compose config -q`。
-- 发布状态：提交 `e14b76f` 已推送到 `origin/fix/web-launch-obstacle-planning`；工作树在推送时干净。按当前请求仅完成分支推送，未创建 Draft PR。
-- 当前状态：Fixed-only 统计、单串口 `rtk_ntrip_node`、CORS 断流/恢复、容器重启和物理 USB 重新枚举均已完成；未启动 CAN、规划器、执行器或 `/cmd_vel`。
-- 本轮最终提交：`688c5a9 Harden mission compatibility boundaries`（前置核心提交 `812eb10`）；已包含 `docs/domain/remote-capture-context.md`、纯任务模型/loader/capture、定位健康评估和对应回归。当前未推送新提交，文档整理修改尚未提交。
+- 发布状态：历史 RTK 提交仍在远端；当前分支为 `fix/web-launch-obstacle-planning`，HEAD=`30b13c3`，本轮仿真/RTK/Web/安全修复尚未提交或推送，也未创建 Draft PR。
+- 当前状态：固定解指标、单串口 `rtk_ntrip_node`、CORS 断流/恢复、仿真 Web RTK 和多对象采集均已验证；当前没有运行 CAN、规划器、执行器、Mid-360 或任何运动进程。
+- 本轮最终提交：无；本轮源码、文档和测试均保留在当前工作树，下一代理应先审查 `git status` 和本文件，不要假设工作树干净。
 - 最新 300 秒静态结果：RTCM `273681` 字节，300/300 条 GGA 为 RTK Fixed，首次 Fixed `0.7s`；Fixed-only 标准差 east `0.008m`、north `0.010m`、radial `0.008m`，最长连续 Fixed `299.0s`；相对首个 Fixed 最大偏差 `0.112m`，对外口径为厘米量级静态重复性。
 - CORS 断流策略：RTCM 超过 15 秒未更新即 `corrections_fresh=false`、`global_position_trusted=false`；解除临时规则后节点自动重连并恢复 `RTK_FIXED` 和可信全局定位。
 - USB 重新枚举结果：Prolific by-id 恢复并指向 `/dev/ttyUSB0`；节点日志经历 `SERIAL_UNAVAILABLE → NO_FIX → SINGLE → DGPS → RTK_FIXED`，容器 `RestartCount=0`，最终状态 `corrections_fresh=true`、`global_position_trusted=true`、`invalid_gga=0`。
@@ -325,7 +334,7 @@
 - 2026-07-20 当前会话边界：只读盘点已完成；本轮仅新增纯 Python 领域模型/兼容 loader/单对象采集状态机/定位健康评估与测试，未启动 ROS/Gazebo、CAN、容器、规划器、执行器或任何运动控制。
 - 2026-07-20 待确认产品细节：真实机器人包络、安全余量和现场标定；仿真使用约 `0.46m × 0.40m` 包络及当前临时 profile，不代替实机测量；已创建 `docs/domain/remote-capture-context.md` 记录已确认通用语言。
 - 2026-07-20 实现进度：用户已确认三个公开 seam；几何生成、全局禁区扣除、任务关系校验、通道安全校验和旧 YAML 转换已按 red→green 完成；当前 23 项模型回归通过，包级 68 项中 67 项通过，唯一失败为沙箱 socket 权限。
-- 当前工作区实况：分支 `fix/web-launch-obstacle-planning`，HEAD `688c5a9`；文档整理后工作树包含待提交的移动、合并和链接修正。
+- 当前工作区实况：分支 `fix/web-launch-obstacle-planning`，HEAD `30b13c3`；工作树包含本轮 RTK/Web/采集/仿真命令 topic 修改及既有未提交变更，禁止用 destructive Git 命令覆盖。
 - 2026-07-20 当前会话实现：新增 `mission/loader.py` 的 `load_mission_data/load_mission_file/mission_to_legacy_areas`，旧 `areas` 自动转换为全局禁区模型；loader 回归现为 7 项，模型异常输入回归现为 23 项。
 - 2026-07-20 当前会话决策：旧多区域 loader/规划器通过显式适配消费无 corridor 的新任务；全局禁区转换为每个旧作业区的 `inner_rings`，包含 corridor 的任务 fail-closed，通道不会被丢弃。
 - 2026-07-20 当前会话实现：新增 `localization/health.py` 的 `assess_localization()`；6 项回归覆盖 GREEN、RTK 丢失 YELLOW、Mid-360/点云/地图位姿 RED 和 malformed input fail-closed。当前未接 ROS 话题或发布健康消息。
@@ -335,3 +344,16 @@
 - 2026-07-20 最终审查状态：初次 Standards/Spec review 提出的顺序缺失、旧 loader 未接线、corridor 元数据缺失和局部 odom 未显式授权均已修复；几何补偿/真实 profile 与 ROS/Web 适配属于明确后续项。
 - 下一窗口：先为 `/localization/health` 监测适配器补充配置化阈值，再接 Web 采集向导；定位健康阈值、真实机器人包络/补偿、CAN/急停/遥控接管和 Mid-360 安全验收未完成前，不启动实机运动。
 - 2026-07-20 文档整理完成：根目录保留 `README.md`、`CLAUDE.md` 和本文件；当前领域上下文、RTK 演示资料已归位，旧操作指南和旧 Claude overview 已归档。下一窗口先阅读本文件的 Active Handoff 与 `docs/remote-capture-mission-plan.md`。
+- 2026-07-20 本轮接手盘点：实际 HEAD 已为 `30b13c3 Clean up root documentation layout`，工作树干净；上方较早的 `688c5a9`/“文档整理未提交”描述仅保留作历史记录。本轮尚未修改源码、启动 ROS/Gazebo、容器、CAN 或运动控制，已读完本文件和遥控采集方案，等待明确下一项产品目标。
+- 2026-07-20 当前建议待确认：Mid-360 应提前以只读传感器 bring-up 并行验证驱动、点云、IMU、时间戳、TF 和 FAST-LIO；Web 采集闭环继续走纯仿真，待接口稳定后再做传感器在环整合，不启动 CAN 或实机运动。
+- 2026-07-21 本轮实现：新增 `remote_capture_sim.launch.py`、多对象 `MissionCaptureStore`、ROS 采集节点和仿真专用 `simulation_teleop`；profile 明确不启动规划器/执行器，`/teleop/cmd_vel` 只经 dead-man/timeout gate 转发到私有 `/simulation/cmd_vel`。
+- 2026-07-21 本轮修复：采集 finish 后 timer 原先仍会采样并清空几何结果；现仅在 session=`capturing` 时采样。近闭合有效几何现在归一化起点并折叠静止尾段，raw trajectory 仍完整保留；新增回归覆盖该边界。
+- 2026-07-21 本轮运行态：domain 0 发现外部残留 `web_teleop_bridge` 的第二个 `/odom` publisher，导致验收数据混源；未擅自停止未知进程，改用 `ROS_DOMAIN_ID=77` 的隔离仿真完成最终证据。
+- 2026-07-21 隔离 domain 证据（早期 profile）：HTTP `8080=200`，rosbridge `9090`，`/odom` 仅 1 个 `ros_gz_bridge` publisher；`/tmp/remote_capture_domain77.yaml` 中作业区、禁区、第二作业区、通道均为 `confirmed`，drafts 为空，order 仅含两个作业区和通道，禁区未入 order。随后安全审查将仿真输出收紧为私有 `/simulation/cmd_vel`。
+- 2026-07-21 浏览器证据（最终 profile）：前端 HTTP `200`，WebSocket 实际收到 `source=simulation/RTK_FIXED/global_position_trusted=true`，页面脚本包含 RTK 天线 marker、仿真/真实 source 标签、采集类型/开始/完成/撤销/草稿/确认和方向遥控控件；本轮未把真实 UM982 接入 domain 77，故该证据不是实机 RTK 证据。
+- 2026-07-21 验证：`python3 -m pytest -q src/mower_coverage/tests` 与 `colcon test --packages-select mower_coverage` 均为 `75 passed`；Python/JS 语法、`git diff --check` 和 `mower_coverage/outdoor_sim/mower_hardware` 构建通过。全 workspace CTest 仍有 outdoor_sim 既有 flake8/pep257/xmllint 失败（55 failures），未扩大范围修复。
+- 2026-07-21 运行边界：ROS 2 CLI 的短时 publisher 偶发 context invalid/一次发布丢失，运行验收使用重复 publish、状态日志和任务文件三者交叉确认；shutdown 路径补充 already-shutdown context 的安全清理。未启动 Mid-360、CAN、规划器、执行器或任何实机运动。
+- 2026-07-21 下一步：先把 RK3588 真实 `/rtk/gps/fix` 与 `/rtk/status` 以只读方式接到同一 Web 展示链并完成浏览器实测；之后另开窗口做 Mid-360 只读 bring-up（点云/IMU/时间戳/TF/FAST-LIO），仍不接 CAN 或运动控制。规划前还需单独执行 mission-level 全局禁区、作业区关系和通道端点校验。
+- 2026-07-21 当前交接更新：仿真 profile 已可直接打开 `http://localhost:8080`；它发布显式 `source=simulation` 的 RTK 天线坐标/状态，健康先 RED 后 GREEN，遥控路径为 `/teleop/cmd_vel → /simulation/cmd_vel → ros_gz_bridge`，不产生全局 `/cmd_vel`。真实硬件 profile 默认使用 `/rtk/gps/fix`，与仿真同图运行时先关闭 `with_sim_rtk`，不能让两个来源并发发布。
+- 2026-07-21 当前交接更新：最新任务结果位于 `/tmp/remote_capture_domain77_rtk.yaml`；两个 work area、一个 no-go zone、一个 corridor 均 confirmed，禁区不进入 order。一次运行中 1 个 RED 样本使 finish 退回 draft，随后稳定 GREEN 重试通过，说明运行态健康门禁有效。
+- 2026-07-21 当前交接更新：本轮没有启动 Mid-360、CAN、规划器、执行器或实机运动；下个窗口先阅读本段与 `docs/remote-capture-mission-plan.md`，再做 Mid-360 只读点云/IMU/时间戳/TF/FAST-LIO bring-up。真实 RK3588 Web/UM982 topic 合并仍需现场只读验收。

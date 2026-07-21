@@ -5,6 +5,6 @@
 - 定位：`/odom` 与完整 TF 树
 - 2D 避障：`/scan`
 - 执行命令：订阅 `/cmd_vel`
-- 完整传感器验证：`/velodyne_points`、`/imu/data`、`/gps/fix`
+- 完整传感器验证：`/velodyne_points`、`/imu/data`、`/rtk/gps/fix`、`/rtk/status`
 
 真实驱动应放在独立硬件包或 adapter 中，不进入规划器和执行器核心实现。

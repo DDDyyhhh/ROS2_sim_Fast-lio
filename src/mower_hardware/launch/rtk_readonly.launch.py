@@ -3,7 +3,8 @@
 
 This profile deliberately starts no planner, executor, CAN bridge, simulator,
 or motor controller.  It is the first real-hardware bring-up profile and only
-owns the UM982 serial fd, NTRIP corrections, /gps/fix and Web/rosbridge path.
+owns the UM982 serial fd, NTRIP corrections, /rtk/gps/fix and Web/rosbridge
+path.
 """
 
 import os
@@ -23,6 +24,8 @@ def generate_launch_description():
     um982_device = LaunchConfiguration('um982_device')
     baud = LaunchConfiguration('baud')
     frame_id = LaunchConfiguration('frame_id')
+    fix_topic = LaunchConfiguration('fix_topic')
+    status_topic = LaunchConfiguration('status_topic')
     caster_host = LaunchConfiguration('caster_host')
     caster_port = LaunchConfiguration('caster_port')
     mountpoint = LaunchConfiguration('mountpoint')
@@ -43,6 +46,8 @@ def generate_launch_description():
             'device': um982_device,
             'baud': baud,
             'frame_id': frame_id,
+            'fix_topic': fix_topic,
+            'status_topic': status_topic,
             'caster_host': caster_host,
             'caster_port': caster_port,
             'mountpoint': mountpoint,
@@ -88,6 +93,14 @@ def generate_launch_description():
             'frame_id',
             default_value=_env('UM982_FRAME_ID', 'rtk_link'),
             description='Frame attached to the RTK antenna'),
+        DeclareLaunchArgument(
+            'fix_topic',
+            default_value=_env('RTK_FIX_TOPIC', '/rtk/gps/fix'),
+            description='Canonical RTK antenna NavSatFix topic'),
+        DeclareLaunchArgument(
+            'status_topic',
+            default_value=_env('RTK_STATUS_TOPIC', '/rtk/status'),
+            description='JSON RTK health topic'),
         DeclareLaunchArgument(
             'caster_host',
             default_value=_env('CORS_HOST', '114.111.30.20'),

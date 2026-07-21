@@ -159,6 +159,35 @@ class CaptureSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'only when ready'):
             session.confirm()
 
+    def test_finish_rechecks_current_localization_health(self):
+        session = CaptureSession('area-1', 'work_area', PROFILE)
+        session.start()
+        for sample in _rectangle_samples():
+            session.record_pose(sample)
+
+        snapshot = session.finish('YELLOW')
+
+        self.assertEqual(snapshot['state'], 'draft')
+        self.assertEqual(snapshot['geometry'], [])
+        self.assertIn('finish', ' '.join(snapshot['issues']))
+        with self.assertRaisesRegex(RuntimeError, 'only when ready'):
+            session.confirm('GREEN')
+
+    def test_confirm_rechecks_current_localization_health(self):
+        session = CaptureSession('area-1', 'work_area', PROFILE)
+        session.start()
+        for sample in _rectangle_samples():
+            session.record_pose(sample)
+        self.assertEqual(session.finish('GREEN')['state'], 'ready')
+
+        with self.assertRaisesRegex(RuntimeError, 'YELLOW'):
+            session.confirm('YELLOW')
+
+        self.assertEqual(session.state, 'draft')
+        self.assertEqual(session.snapshot()['geometry'], [])
+        session.finish('GREEN')
+        self.assertEqual(session.confirm('GREEN')['status'], 'confirmed')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -33,6 +33,10 @@ class RtkNtripNode(Node):
         self._device = self.declare_parameter("device", "/dev/um982").value
         self._baud = int(self.declare_parameter("baud", 115200).value)
         self._frame_id = str(self.declare_parameter("frame_id", "rtk_link").value)
+        self._fix_topic = str(
+            self.declare_parameter("fix_topic", "/rtk/gps/fix").value)
+        self._status_topic = str(
+            self.declare_parameter("status_topic", "/rtk/status").value)
         self._caster_host = str(
             self.declare_parameter("caster_host", "114.111.30.20").value
         )
@@ -59,9 +63,9 @@ class RtkNtripNode(Node):
             self.declare_parameter("correction_timeout", 15.0).value
         )
 
-        self._fix_pub = self.create_publisher(NavSatFix, "/gps/fix", 10)
+        self._fix_pub = self.create_publisher(NavSatFix, self._fix_topic, 10)
         self._nmea_pub = self.create_publisher(String, "/rtk/nmea", 20)
-        self._status_pub = self.create_publisher(String, "/rtk/status", 10)
+        self._status_pub = self.create_publisher(String, self._status_topic, 10)
         self._health = RtkHealth(
             stale_after_s=self._nmea_timeout,
             correction_timeout_s=self._correction_timeout,

@@ -66,6 +66,32 @@ class MissionGeometryTests(unittest.TestCase):
         )
         self.assertEqual(result.raw_trajectory, tuple(trajectory))
 
+    def test_stationary_samples_after_near_closure_do_not_break_geometry(self):
+        trajectory = [
+            {'x': 0.0, 'y': 0.0, 'localization_ok': True},
+            {'x': 4.0, 'y': 0.0, 'localization_ok': True},
+            {'x': 4.0, 'y': 3.0, 'localization_ok': True},
+            {'x': 0.0, 'y': 3.0, 'localization_ok': True},
+            *[
+                {'x': 0.2, 'y': 0.1, 'localization_ok': True}
+                for _ in range(8)
+            ],
+        ]
+
+        result = derive_effective_geometry(
+            trajectory,
+            'work_area',
+            {'closure_tolerance': 0.5, 'simplify_tolerance': 0.01},
+        )
+
+        self.assertEqual(result.status, 'ready')
+        self.assertEqual(
+            result.geometry,
+            ((0.0, 0.0), (4.0, 0.0), (4.0, 3.0),
+             (0.0, 3.0), (0.0, 0.0)),
+        )
+        self.assertEqual(len(result.raw_trajectory), len(trajectory))
+
     def test_localization_failure_keeps_capture_as_draft(self):
         trajectory = [
             {'x': 0.0, 'y': 0.0, 'localization_ok': True},

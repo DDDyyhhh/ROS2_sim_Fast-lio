@@ -269,8 +269,12 @@ Simulation and localization topics:
 /velodyne_points
 /imu/data
 /odom
-/gps/fix
+/gps/fix (Gazebo raw simulated GNSS input)
+/rtk/gps/fix (canonical RTK antenna fix)
+/rtk/status
+/localization/health
 /joint_states
+/simulation/cmd_vel (remote-capture simulation only)
 /cmd_vel
 /scan
 ```

@@ -72,6 +72,25 @@ def test_rtk_launch_is_read_only_and_uses_canonical_fix_contract():
     assert "'use_sim_time': False" in launch
     assert "'/cmd_vel'" not in launch
     assert "'rtk_link'" in launch
+    assert "default_value=_env('RTK_FIX_TOPIC', '/rtk/gps/fix')" in launch
+
+
+def test_simulation_profile_publishes_an_explicit_simulated_rtk_stream():
+    launch_file = (
+        REPO_ROOT / 'src' / 'mower_coverage' / 'launch'
+        / 'remote_capture_sim.launch.py'
+    )
+    launch = launch_file.read_text()
+
+    ast.parse(launch)
+    assert "executable='simulation_rtk'" in launch
+    assert "default_value='true'" in launch
+    assert "'/rtk/gps/fix'" in launch
+    assert "'/rtk/status'" in launch
+    assert "'cmd_vel_topic': simulation_cmd_vel_topic" in launch
+    assert "'output_topic': simulation_cmd_vel_topic" in launch
+    assert "'/simulation/cmd_vel'" in launch
+    assert "'initial_health_state': 'RED'" in launch
 
 
 def test_websocket_url_uses_the_host_serving_the_page():
@@ -80,4 +99,5 @@ def test_websocket_url_uses_the_host_serving_the_page():
     assert 'window.location.hostname' in app
     assert 'ws://localhost:9090' not in app
     assert 'RTK固定解' not in app
-    assert 'GNSS定位有效' in app
+    assert '仿真GNSS' in app
+    assert 'RTK天线' in app

@@ -42,8 +42,12 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            node.destroy_node()
+            try:
+                rclpy.shutdown()
+            except RuntimeError:
+                pass
 
 
 if __name__ == "__main__":
