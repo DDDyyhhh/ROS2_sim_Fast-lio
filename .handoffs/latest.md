@@ -3,7 +3,7 @@
 Date: 2026-07-23
 Workspace: `/home/yh/mower_ws`
 Branch: `fix/web-launch-obstacle-planning`
-Current HEAD: `722715f Complete isolated RTK remote capture simulation`
+Current HEAD: `3295acd Complete remote-capture planning and simulation safety`
 
 ## Session focus
 
@@ -99,7 +99,7 @@ Relevant test and implementation paths:
 
 ## Worktree cautions
 
-The worktree contains many pre-existing modified files and new files, including the raw debug artifacts above. Do not use destructive Git commands, do not reset or clean the worktree, and do not assume the changes belong to this session. The current `implementation-notes.md` contains the consolidated recovery decision and latest verification evidence; reconcile documentation carefully rather than overwriting it.
+The feature changes described here were committed as `3295acd` and pushed to `origin/fix/web-launch-obstacle-planning`. Only the raw debug artifacts listed above remain intentionally untracked. Do not use destructive Git commands, do not reset or clean the worktree, and do not stage those runtime artifacts. The current `implementation-notes.md` contains the consolidated recovery decision and latest verification evidence; reconcile documentation carefully rather than overwriting it.
 
 ## Current window update (2026-07-22)
 
@@ -127,7 +127,7 @@ The worktree contains many pre-existing modified files and new files, including 
 - Safe simulation execution still needs user verification, especially visible stopping for missing/stale `/scan` or a nearby obstacle and the resulting coverage statistics.
 - A planner-service startup acknowledgement before enabling `载入规划` remains a separate, unimplemented Web contract; do not add silent retry or fallback without product confirmation.
 - No CAN, global `/cmd_vel`, physical control ownership, or real-robot motion is authorized. The current scope remains offline/simulation only.
-- The worktree contains pre-existing uncommitted changes; no mixed commit was created. The known sandbox TCP socket test failure is environmental, not a new regression.
+- Publication completed in `3295acd`; the known sandbox TCP socket test failure is environmental, not a new regression. The next window should verify safe simulation execution only.
 
 ### Next actions
 
