@@ -43,6 +43,11 @@ def generate_launch_description():
     area_file = LaunchConfiguration('area_file')
     checkpoint_file = LaunchConfiguration('checkpoint_file')
     execution_mode = LaunchConfiguration('execution_mode')
+    cmd_vel_topic = LaunchConfiguration('cmd_vel_topic')
+    mission_topic = LaunchConfiguration('mission_topic')
+    robot_length = LaunchConfiguration('robot_length')
+    robot_width = LaunchConfiguration('robot_width')
+    safety_margin = LaunchConfiguration('safety_margin')
     state_dir = Path.home() / '.local' / 'state' / 'mower_coverage'
 
     declare_use_sim_time = DeclareLaunchArgument(
@@ -62,6 +67,21 @@ def generate_launch_description():
     declare_execution_mode = DeclareLaunchArgument(
         'execution_mode', default_value='safe',
         description='执行模式: direct 或 safe')
+    declare_cmd_vel_topic = DeclareLaunchArgument(
+        'cmd_vel_topic', default_value='/cmd_vel',
+        description='执行器速度输出话题')
+    declare_mission_topic = DeclareLaunchArgument(
+        'mission_topic', default_value='/web/mission',
+        description='遥控采集任务选择话题')
+    declare_robot_length = DeclareLaunchArgument(
+        'robot_length', default_value='0.4',
+        description='规划 profile 中的机器人长度（仿真模型）')
+    declare_robot_width = DeclareLaunchArgument(
+        'robot_width', default_value='0.3',
+        description='规划 profile 中的机器人宽度（仿真模型）')
+    declare_safety_margin = DeclareLaunchArgument(
+        'safety_margin', default_value='0.1',
+        description='规划 profile 的安全余量（仿真）')
 
     # 1. 多区域定义节点
     multi_area_definer = Node(
@@ -92,6 +112,10 @@ def generate_launch_description():
             'terrain_slope_threshold': 20.0,
             'terrain_slow_factor': 0.5,
             'area_file': area_file,
+            'mission_topic': mission_topic,
+            'robot_length': robot_length,
+            'robot_width': robot_width,
+            'safety_margin': safety_margin,
         }],
     )
 
@@ -107,6 +131,7 @@ def generate_launch_description():
             'goal_tolerance': 0.3,
             'max_linear_speed': 1.0,
             'max_angular_speed': 1.0,
+            'cmd_vel_topic': cmd_vel_topic,
             'checkpoint_file': checkpoint_file,
             'execution_mode': execution_mode,
         }],
@@ -119,6 +144,11 @@ def generate_launch_description():
         declare_area_file,
         declare_checkpoint_file,
         declare_execution_mode,
+        declare_cmd_vel_topic,
+        declare_mission_topic,
+        declare_robot_length,
+        declare_robot_width,
+        declare_safety_margin,
         multi_area_definer,
         hill_boustrophedon,
         multi_area_executor,

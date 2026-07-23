@@ -36,9 +36,12 @@ const state = {
     areas: [],           // { id, name, latlngs, color, layer }
     obstacles: [],       // { id, name, latlngs, color, layer }
     robotPose: null,     // { lat, lng }
+    robotHeading: null,  // 罗盘角度：北 0°、东 90°
     robotMarker: null,   // Leaflet marker for robot
     pathLine: null,      // Leaflet polyline for coverage path
     captureLine: null,   // 当前遥控采集原始轨迹
+    capturePreviewItems: null, // 完成/草稿状态的采集预览
+    _capturePreviewSignature: null,
     antennaMarker: null, // 真实 RTK 天线位置（与仿真机器人分开）
     missionItems: null,  // 已确认对象/草稿图层
     coveragePercent: 0,
@@ -48,6 +51,10 @@ const state = {
     _odomReceived: false, // 是否收到过 odom 数据
     captureState: null,
     mission: { objects: [], drafts: [], order: [] },
+    planningLoaded: false,
+    _missionGeometrySignature: null,
+    captureCorrectionMode: false,
+    captureCorrectionDraw: null,
     rtkStatus: null,
     realRtkFix: null,
     captureCommandTopic: null,
@@ -69,6 +76,9 @@ const map = L.map('map', {
     zoom: CONFIG.initialZoom,
     zoomControl: true,
 });
+// 采集路线放在机器人 marker 之上，避免当前位置标记遮住首尾连接。
+map.createPane('captureRoutePane');
+map.getPane('captureRoutePane').style.zIndex = 650;
 
 // 卫星图图层
 const satelliteLayer = L.tileLayer(CONFIG.satelliteTileUrl, {
@@ -95,15 +105,12 @@ L.control.layers({
 // =============================================================
 const robotIcon = L.divIcon({
     className: 'robot-marker',
-    html: `<div style="
-        width:32px;height:32px;background:#ff2222;
-        border:3px solid white;border-radius:50%;
-        box-shadow:0 0 12px rgba(255,34,34,0.9), 0 0 24px rgba(255,34,34,0.4);
-        display:flex;align-items:center;justify-content:center;
-        font-size:16px;font-weight:bold;color:white;
-        animation:pulse-robot 1.5s ease-in-out infinite;">M</div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
+    html: '<div class="robot-heading-icon" title="车头方向未知">'
+        + '<div class="robot-heading-arrow"></div>'
+        + '<div class="robot-heading-body">M</div>'
+        + '</div>',
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
 });
 state.robotMarker = L.marker(CONFIG.initialCenter, {
     icon: robotIcon,
@@ -134,9 +141,12 @@ state.captureLine = L.polyline([], {
     color: '#00ddff',
     weight: 4,
     opacity: 0.95,
+    pane: 'captureRoutePane',
 }).addTo(map);
 state.missionItems = new L.FeatureGroup();
 map.addLayer(state.missionItems);
+state.capturePreviewItems = new L.FeatureGroup();
+map.addLayer(state.capturePreviewItems);
 
 // =============================================================
 // 绘图控制（Leaflet.draw）
@@ -168,6 +178,11 @@ map.addControl(drawControl);
 // 画完多边形后
 map.on(L.Draw.Event.CREATED, function (event) {
     const layer = event.layer;
+
+    if (state.captureCorrectionMode) {
+        handleCaptureCorrectionLayer(layer);
+        return;
+    }
 
     if (state.drawMode === 'obstacle') {
         // ---- 障碍物模式：红色多边形 ----
@@ -266,7 +281,7 @@ function connectROS() {
         state.connected = true;
         document.getElementById('ros-status').innerHTML =
             '<span class="status-dot connected"></span>已连接';
-        document.getElementById('btn-send').disabled = false;
+        updateSendButton();
         setupROSSubscribers();
         updateCaptureUI();
     });
@@ -274,12 +289,14 @@ function connectROS() {
     state.ros.on('close', function () {
         state.connected = false;
         state.rosSubscribed = false;  // 下次重连允许重新订阅
+        cancelCaptureManualCorrect(false);
         stopTeleop();
         document.getElementById('ros-status').innerHTML =
             '<span class="status-dot disconnected"></span>未连接';
         document.getElementById('btn-send').disabled = true;
         document.getElementById('btn-plan').disabled = true;
         document.getElementById('btn-execute').disabled = true;
+        state.planningLoaded = false;
         updateCaptureUI();
     });
 
@@ -394,6 +411,7 @@ function setupROSSubscribers() {
     captureStateTopic.subscribe(msg => {
         try {
             state.captureState = JSON.parse(msg.data);
+            renderCapturePreview();
             updateCaptureUI();
         } catch (error) {
             showToast('❌ 采集状态消息无效', 'error');
@@ -407,8 +425,15 @@ function setupROSSubscribers() {
     });
     missionTopic.subscribe(msg => {
         try {
+            const previousSignature = state._missionGeometrySignature;
             state.mission = JSON.parse(msg.data);
             renderMissionItems();
+            renderCapturePreview();
+            if (previousSignature !== state._missionGeometrySignature) {
+                state.planningLoaded = false;
+                document.getElementById('btn-plan').disabled = true;
+                document.getElementById('btn-execute').disabled = true;
+            }
             updateCaptureUI();
         } catch (error) {
             showToast('❌ 任务消息无效', 'error');
@@ -436,11 +461,15 @@ function setupROSSubscribers() {
         const x = msg.pose.pose.position.x;
         const y = msg.pose.pose.position.y;
         const [lat, lng] = approxLocalToGPS(x, y);
+        const heading = updateRobotHeading(msg.pose.pose.orientation);
         state._odomReceived = true;
-        state.robotPose = { lat, lng };
+        state.robotPose = { lat, lng, heading };
         state.robotMarker.setLatLng([lat, lng]);
+        const headingText = heading === null
+            ? ' · 车头 --'
+            : ` · 车头 ${heading.toFixed(0)}°`;
         document.getElementById('sim-pose-status').textContent =
-            `🤖 仿真位姿: ${x.toFixed(2)}, ${y.toFixed(2)}m`;
+            `🤖 仿真位姿: ${x.toFixed(2)}, ${y.toFixed(2)}m${headingText}`;
     });
 
     // 2. 订阅覆盖率统计和执行状态
@@ -474,6 +503,16 @@ function setupROSSubscribers() {
                 // ★ 更新暂停/继续/停止按钮状态
                 updateExecButtons();
                 state._wasExecuting = data.executing;
+            }
+            if (data.safety_stop_reason === 'scan_unavailable') {
+                document.getElementById('mode-display').textContent =
+                    '⚠️ 安全停车：等待新鲜 /scan';
+            } else if (data.safety_stop_reason === 'obstacle') {
+                const distance = Number(data.obstacle_distance);
+                const suffix = Number.isFinite(distance)
+                    ? `（障碍物 ${distance.toFixed(2)}m）` : '';
+                document.getElementById('mode-display').textContent =
+                    `⚠️ 避障停车${suffix}`;
             }
             if (data.covered && data.total) {
                 state._progressStr = `${data.covered}/${data.total}`;
@@ -509,6 +548,49 @@ function setupROSSubscribers() {
             state.pathLine.setLatLngs([]);
         }
     });
+}
+
+function normalizeHeadingDegrees(degrees) {
+    const normalized = degrees % 360.0;
+    return normalized < 0.0 ? normalized + 360.0 : normalized;
+}
+
+function quaternionToHeadingDegrees(orientation) {
+    if (!orientation) return null;
+    const values = [orientation.x, orientation.y, orientation.z, orientation.w]
+        .map(Number);
+    if (!values.every(Number.isFinite)) return null;
+    const norm = Math.hypot(...values);
+    if (norm < 1e-9) return null;
+    const [x, y, z, w] = values.map(value => value / norm);
+    const yaw = Math.atan2(
+        2.0 * (w * z + x * y),
+        1.0 - 2.0 * (y * y + z * z),
+    );
+    // ROS yaw=0 points +x; the local map conversion uses +x=east,+y=north.
+    return normalizeHeadingDegrees(90.0 - yaw * 180.0 / Math.PI);
+}
+
+function updateRobotHeading(orientation) {
+    const heading = quaternionToHeadingDegrees(orientation);
+    state.robotHeading = heading;
+    const markerElement = state.robotMarker && state.robotMarker.getElement
+        ? state.robotMarker.getElement() : null;
+    const headingElement = markerElement
+        ? markerElement.querySelector('.robot-heading-icon') : null;
+    if (!headingElement) return heading;
+
+    const arrow = headingElement.querySelector('.robot-heading-arrow');
+    if (heading === null) {
+        headingElement.style.transform = 'rotate(0deg)';
+        headingElement.title = '车头方向未知';
+        if (arrow) arrow.style.opacity = '0';
+        return heading;
+    }
+    headingElement.style.transform = `rotate(${heading}deg)`;
+    headingElement.title = `车头方向 ${heading.toFixed(0)}°`;
+    if (arrow) arrow.style.opacity = '1';
+    return heading;
 }
 
 function updateRealRtkStatus() {
@@ -571,8 +653,96 @@ function captureSaveDraft() {
     if (publishCaptureCommand('save_draft')) showToast('📝 已保存为草稿', 'success');
 }
 
+function suggestRetryId(objectId) {
+    const mission = state.mission || {};
+    const known = new Set([
+        ...(mission.objects || []),
+        ...(mission.drafts || []),
+    ].map(item => item && item.id).filter(Boolean));
+    const base = `${objectId || 'capture'}-retry`;
+    let candidate = base;
+    let suffix = 2;
+    while (known.has(candidate)) candidate = `${base}-${suffix++}`;
+    return candidate;
+}
+
+function captureRetry() {
+    const active = state.captureState && state.captureState.active;
+    if (!active) return;
+    stopTeleop();
+    const nextId = suggestRetryId(active.id);
+    if (publishCaptureCommand('save_draft')) {
+        const idInput = document.getElementById('capture-id');
+        idInput.value = nextId;
+        showToast(
+            `📝 当前失败轨迹已保留为草稿，请点击“开始采集”创建 ${nextId}`,
+            'success',
+        );
+    }
+}
+
+function captureManualCorrect() {
+    const active = state.captureState && state.captureState.active;
+    if (!active || active.state !== 'draft' || active.type === 'corridor') return;
+    if (!L.Draw || !L.Draw.Polygon) {
+        showToast('❌ 当前地图不支持手动修正', 'error');
+        return;
+    }
+    state.captureCorrectionMode = true;
+    state.captureCorrectionDraw = new L.Draw.Polygon(map, {
+        allowIntersection: false,
+        showArea: true,
+        shapeOptions: {
+            color: '#ffcc00',
+            weight: 3,
+            dashArray: '6,4',
+        },
+    });
+    state.captureCorrectionDraw.enable();
+    showToast('✎ 请在地图上重新画一个不自交的闭合边界，双击结束', 'info');
+    updateCaptureUI();
+}
+
+function cancelCaptureManualCorrect(showMessage = true) {
+    if (state.captureCorrectionDraw) state.captureCorrectionDraw.disable();
+    state.captureCorrectionDraw = null;
+    state.captureCorrectionMode = false;
+    if (showMessage) showToast('已取消手动修正', 'info');
+    updateCaptureUI();
+}
+
+function handleCaptureCorrectionLayer(layer) {
+    const active = state.captureState && state.captureState.active;
+    const latlngs = layer.getLatLngs && layer.getLatLngs()[0];
+    if (map.hasLayer(layer)) map.removeLayer(layer);
+    state.captureCorrectionDraw = null;
+    state.captureCorrectionMode = false;
+    if (!active || !Array.isArray(latlngs) || latlngs.length < 3) {
+        updateCaptureUI();
+        return;
+    }
+
+    const geometry = latlngs.map(point => approxGpsToLocal(point.lat, point.lng));
+    if (publishCaptureCommand('manual_geometry', { geometry })) {
+        showToast('✎ 手动几何已提交，请检查后点击“确认对象”', 'info');
+    }
+    updateCaptureUI();
+}
+
 function captureCancel() {
     stopTeleop();
+    const active = state.captureState && state.captureState.active;
+    if (!active) {
+        const drafts = state.mission && Array.isArray(state.mission.drafts)
+            ? state.mission.drafts.length : 0;
+        showToast(
+            drafts
+                ? '当前没有正在采集的对象，已保存草稿仍保留'
+                : '当前没有正在采集的对象',
+            'info',
+        );
+        return;
+    }
     if (publishCaptureCommand('cancel')) showToast('✖ 已取消当前采集', 'info');
 }
 
@@ -604,6 +774,45 @@ function captureTypeLabel(type) {
     return ({ work_area: '作业区', no_go_zone: '禁区', corridor: '通道' })[type] || type;
 }
 
+function formatCapturePoint(point) {
+    if (!point || !Number.isFinite(Number(point.x))
+        || !Number.isFinite(Number(point.y))) return '--';
+    return `(${Number(point.x).toFixed(2)}, ${Number(point.y).toFixed(2)})m`;
+}
+
+function findSelfIntersectionPoint(active) {
+    const issues = active && Array.isArray(active.issues) ? active.issues : [];
+    const number = '[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?';
+    const pattern = new RegExp(
+        `self-intersection\\s*\\[\\s*(${number})\\s+(${number})\\s*\\]`,
+        'i',
+    );
+    for (const issue of issues) {
+        const match = String(issue).match(pattern);
+        if (match) return { x: Number(match[1]), y: Number(match[2]) };
+    }
+    return null;
+}
+
+function renderCaptureClosureFeedback(active) {
+    const element = document.getElementById('capture-closure-feedback');
+    if (!element) return;
+    if (!active) {
+        element.textContent = '起点 -- · 终点 -- · 闭合距离 -- · 闭合阈值 --';
+        return;
+    }
+    const distance = Number(active.closure_distance);
+    const tolerance = Number(active.closure_tolerance);
+    const distanceText = Number.isFinite(distance) ? `${distance.toFixed(2)}m` : '--';
+    const toleranceText = Number.isFinite(tolerance) ? `${tolerance.toFixed(2)}m` : '--';
+    element.textContent = [
+        `起点 ${formatCapturePoint(active.start_point)}`,
+        `终点 ${formatCapturePoint(active.end_point)}`,
+        `闭合距离 ${distanceText}`,
+        `闭合阈值 ${toleranceText}`,
+    ].join(' · ');
+}
+
 function updateCaptureUI() {
     const active = state.captureState && state.captureState.active;
     const captureState = state.captureState || {};
@@ -613,15 +822,20 @@ function updateCaptureUI() {
         const el = document.getElementById(id);
         if (el) el.disabled = disabled;
     };
+    const canFinish = activeState === 'capturing' || activeState === 'draft';
     setDisabled('btn-capture-start', !state.connected || hasActive);
-    setDisabled('btn-capture-finish', !hasActive || activeState !== 'capturing');
+    setDisabled('btn-capture-finish', !hasActive || !canFinish);
     setDisabled('btn-capture-undo', !hasActive || !(active.raw_trajectory || []).length);
     setDisabled('btn-capture-draft', !hasActive);
     setDisabled(
         'btn-capture-confirm',
         !hasActive || activeState !== 'ready'
             || captureState.health_state !== 'GREEN');
-    setDisabled('btn-capture-cancel', !hasActive);
+    // 保持可点击，让保存草稿后再次点“取消”也能得到明确反馈。
+    setDisabled('btn-capture-cancel', !state.connected);
+    setDisabled(
+        'btn-capture-load-plan',
+        !state.connected || hasActive || !(state.mission.objects || []).length);
 
     const typeSelect = document.getElementById('capture-type');
     typeSelect.disabled = hasActive;
@@ -632,13 +846,116 @@ function updateCaptureUI() {
     const stateText = hasActive
         ? `${captureTypeLabel(active.type)} · ${activeState} · ${(active.raw_trajectory || []).length} 点`
         : '未开始采集';
+    const issues = hasActive && Array.isArray(active.issues)
+        ? active.issues.map(issue => String(issue)) : [];
+    const hasClosureMetrics = active
+        && Number.isFinite(Number(active.closure_distance))
+        && Number.isFinite(Number(active.closure_tolerance));
+    const closureIssue = hasClosureMetrics
+        ? Number(active.closure_distance) > Number(active.closure_tolerance)
+        : issues.some(issue => issue.includes('not close to its start'));
+    const invalidPolygon = issues.some(issue =>
+        issue.includes('does not form a valid polygon'));
+    const selfIntersection = issues.some(issue =>
+        /self-intersection/i.test(issue));
+    const intersectionPoint = selfIntersection
+        ? findSelfIntersectionPoint(active) : null;
+    const canRecover = hasActive
+        && activeState === 'draft'
+        && invalidPolygon;
+    const geometryHint = closureIssue
+        ? '⚠️ 轨迹未闭合，请回到起点附近后继续采集，再次点击完成'
+        : invalidPolygon
+            ? selfIntersection
+                ? '⚠️ 轨迹存在自交，请沿边界单向绕行后再次点击完成'
+                : '⚠️ 轨迹不构成有效多边形，请检查路线后再次点击完成'
+            : activeState === 'ready'
+                ? '✅ 已闭合，请点击“确认对象”后载入规划'
+                : '';
     const health = captureState.health_state ? ` · 定位 ${captureState.health_state}` : '';
-    document.getElementById('capture-state-text').textContent = stateText + health;
+    const draftCount = Array.isArray(captureState.drafts)
+        ? captureState.drafts.length : 0;
+    const draftHint = !hasActive && draftCount
+        ? ` · 已保留 ${draftCount} 个草稿` : '';
+    const lastError = typeof captureState.last_error === 'string'
+        ? captureState.last_error.trim() : '';
+    const errorHint = lastError ? ` · ❌ ${lastError}` : '';
+    const movementHint = captureState.drive_allowed
+        ? '🟢 移动可用' : '🔴 移动锁定';
+    const samplingHint = captureState.sampling_allowed
+        ? '🔴 正在记录采样' : '⚪ 未记录采样';
+    document.getElementById('capture-state-text').textContent =
+        [
+            stateText,
+            movementHint,
+            samplingHint,
+            geometryHint,
+            intersectionPoint ? `自交点 ${formatCapturePoint(intersectionPoint)}` : '',
+            health,
+            draftHint,
+            errorHint,
+        ]
+            .filter(Boolean).join(' · ');
+    renderCaptureClosureFeedback(active);
 
-    document.querySelectorAll('.teleop-btn').forEach(button => {
-        button.disabled = !captureState.drive_allowed || !state.connected;
-    });
+    const recovery = document.getElementById('capture-recovery');
+    const recoveryMessage = document.getElementById('capture-recovery-message');
+    const retryButton = document.getElementById('btn-capture-retry');
+    const manualButton = document.getElementById('btn-capture-manual-correct');
+    const correctionCancelButton = document.getElementById(
+        'btn-capture-correction-cancel');
+    const showRecovery = canRecover || state.captureCorrectionMode;
+    recovery.hidden = !showRecovery;
+    if (state.captureCorrectionMode) {
+        recoveryMessage.textContent = '请在地图上画出新的不自交边界';
+    } else if (canRecover) {
+        recoveryMessage.textContent = intersectionPoint
+            ? `检测到自交，交点 ${formatCapturePoint(intersectionPoint)}；当前仍为草稿`
+            : '检测到无效多边形；当前仍为草稿';
+    } else {
+        recoveryMessage.textContent = '';
+    }
+    setDisabled(
+        'btn-capture-retry',
+        !canRecover || state.captureCorrectionMode,
+    );
+    setDisabled(
+        'btn-capture-manual-correct',
+        !canRecover || state.captureCorrectionMode
+            || (active && active.type === 'corridor'),
+    );
+    correctionCancelButton.hidden = !state.captureCorrectionMode;
+    manualButton.hidden = state.captureCorrectionMode;
+    retryButton.hidden = state.captureCorrectionMode;
+
+    const teleopEnabled = !!captureState.drive_allowed && state.connected;
+    const joystick = document.getElementById('teleop-joystick');
+    const stopButton = document.getElementById('teleop-stop');
+    joystick.classList.toggle('disabled', !teleopEnabled);
+    joystick.setAttribute('aria-disabled', String(!teleopEnabled));
+    stopButton.disabled = !state.connected;
+    if (!teleopEnabled && joystickPointerId !== null) stopTeleop();
     renderMissionList();
+}
+
+function deleteMissionObject(item) {
+    if (!item || !item.id) return;
+    if (state.captureState && state.captureState.active) {
+        showToast('❌ 请先完成、保存或取消当前采集，再删除任务对象', 'error');
+        return;
+    }
+    if (state.planningLoaded || ['executing', 'paused'].includes(state.execMode)) {
+        showToast('❌ 请先停止并清除已载入规划，再删除任务对象', 'error');
+        return;
+    }
+    const label = `${captureTypeLabel(item.type)} ${item.id}`;
+    const kind = item._draft ? '草稿' : '已确认对象';
+    if (!window.confirm(`确定删除${kind}“${label}”吗？此操作会同步删除持久化任务记录。`)) {
+        return;
+    }
+    if (publishCaptureCommand('delete', { id: item.id })) {
+        showToast(`🗑️ 已请求删除${label}`, 'info');
+    }
 }
 
 function renderMissionList() {
@@ -647,13 +964,40 @@ function renderMissionList() {
     const objects = (state.mission.objects || []).map(item => ({ ...item, _draft: false }));
     const drafts = (state.mission.drafts || []).map(item => ({ ...item, _draft: true }));
     const all = objects.concat(drafts);
+    const active = !!(state.captureState && state.captureState.active);
+    const missionMutationBlocked = state.planningLoaded
+        || ['executing', 'paused'].includes(state.execMode);
+    const signature = JSON.stringify({
+        items: all.map(item => [item.id, item.type, item._draft]),
+        connected: state.connected,
+        active,
+        missionMutationBlocked,
+    });
+    if (container.dataset.renderSignature === signature) return;
+    container.dataset.renderSignature = signature;
     if (!all.length) {
-        container.textContent = '暂无已确认对象';
+        container.textContent = '暂无已确认对象或草稿';
         return;
     }
-    container.textContent = all.map(item =>
-        `${item._draft ? '📝' : '✅'}${captureTypeLabel(item.type)}:${item.id}`
-    ).join('  ');
+    container.replaceChildren();
+    all.forEach(item => {
+        const entry = document.createElement('span');
+        entry.className = 'mission-object-entry';
+
+        const label = document.createElement('span');
+        label.textContent = `${item._draft ? '📝' : '✅'}${captureTypeLabel(item.type)}:${item.id}`;
+        entry.appendChild(label);
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'btn btn-danger mission-object-delete';
+        deleteButton.textContent = '删除';
+        deleteButton.disabled = !state.connected || active || missionMutationBlocked;
+        deleteButton.setAttribute('aria-label', `删除${captureTypeLabel(item.type)} ${item.id}`);
+        deleteButton.addEventListener('click', () => deleteMissionObject(item));
+        entry.appendChild(deleteButton);
+        container.appendChild(entry);
+    });
 }
 
 function renderMissionItems() {
@@ -661,20 +1005,174 @@ function renderMissionItems() {
     state.missionItems.clearLayers();
     const objects = (state.mission.objects || []).map(item => ({ ...item, _draft: false }));
     const drafts = (state.mission.drafts || []).map(item => ({ ...item, _draft: true }));
-    objects.concat(drafts).forEach(item => {
+    const allItems = objects.concat(drafts);
+    const signature = JSON.stringify(allItems.map(item => ({
+        id: item.id,
+        type: item.type,
+        status: item.status,
+        draft: item._draft,
+        geometry: item.geometry || [],
+        raw_trajectory: (item.geometry || []).length
+            ? [] : (item.raw_trajectory || []),
+    })));
+    let hasRenderableGeometry = false;
+    allItems.forEach(item => {
         const geometry = item.geometry || [];
-        if (geometry.length < 2) return;
-        const latlngs = geometry.map(point => approxLocalToGPS(point[0], point[1]));
+        const rawTrajectory = item.raw_trajectory || [];
+        const rawPoints = rawTrajectory
+            .filter(point => Number.isFinite(Number(point.x))
+                && Number.isFinite(Number(point.y)))
+            .map(point => [Number(point.x), Number(point.y)]);
+        const points = geometry.length >= 2 ? geometry : rawPoints;
+        if (points.length < 2) return;
+        const latlngs = points.map(point => approxLocalToGPS(point[0], point[1]));
+        if (!latlngs.every(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))) return;
         const color = item._draft ? '#aaaaaa' : (
             item.type === 'no_go_zone' ? '#ff2222' :
             item.type === 'corridor' ? '#ff9900' : '#00ddff'
         );
-        const layer = item.type === 'corridor'
-            ? L.polyline(latlngs, { color, weight: 4, dashArray: item._draft ? '5,5' : null })
-            : L.polygon(latlngs, { color, fillColor: color, fillOpacity: item._draft ? 0.08 : 0.2, dashArray: item._draft ? '5,5' : null });
-        layer.bindTooltip(`${item._draft ? '草稿' : '已确认'} · ${captureTypeLabel(item.type)} · ${item.id}`);
+        const layer = geometry.length < 2 || item.type === 'corridor'
+            ? L.polyline(latlngs, {
+                color,
+                weight: 4,
+                dashArray: item._draft ? '5,5' : null,
+                pane: 'captureRoutePane',
+            })
+            : L.polygon(latlngs, {
+                color,
+                fillColor: color,
+                fillOpacity: item._draft ? 0.08 : 0.2,
+                dashArray: item._draft ? '5,5' : null,
+                pane: 'captureRoutePane',
+            });
+        const label = geometry.length < 2 ? '原始轨迹草稿' : (
+            item._draft ? '草稿' : '已确认');
+        layer.bindTooltip(`${label} · ${captureTypeLabel(item.type)} · ${item.id}`);
         state.missionItems.addLayer(layer);
+        hasRenderableGeometry = true;
+
+        const intersectionPoint = findSelfIntersectionPoint(item);
+        if (intersectionPoint) {
+            const [intersectionLat, intersectionLng] = approxLocalToGPS(
+                intersectionPoint.x,
+                intersectionPoint.y,
+            );
+            const marker = L.circleMarker(
+                [intersectionLat, intersectionLng],
+                {
+                    radius: 9,
+                    color: '#fff',
+                    weight: 2,
+                    fillColor: '#ff2244',
+                    fillOpacity: 1.0,
+                    pane: 'captureRoutePane',
+                },
+            );
+            marker.bindTooltip(
+                `⚠️ 自交点 · ${formatCapturePoint(intersectionPoint)}`,
+            );
+            state.missionItems.addLayer(marker);
+        }
     });
+    if (hasRenderableGeometry && signature !== state._missionGeometrySignature) {
+        const bounds = state.missionItems.getBounds();
+        if (bounds.isValid()) map.fitBounds(bounds.pad(0.25), { maxZoom: 19 });
+    }
+    state._missionGeometrySignature = signature;
+}
+
+function renderCapturePreview() {
+    if (!state.capturePreviewItems) return;
+    state.capturePreviewItems.clearLayers();
+    const active = state.captureState && state.captureState.active;
+    if (!active) {
+        state._capturePreviewSignature = null;
+        return;
+    }
+
+    const geometry = active.geometry || [];
+    const rawTrajectory = active.raw_trajectory || [];
+    const rawPoints = rawTrajectory
+        .filter(point => Number.isFinite(Number(point.x))
+            && Number.isFinite(Number(point.y)))
+        .map(point => [Number(point.x), Number(point.y)]);
+    const points = geometry.length >= 2 ? geometry : rawPoints;
+    if (points.length < 2) return;
+
+    const latlngs = points.map(point => approxLocalToGPS(point[0], point[1]));
+    if (!latlngs.every(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng))) return;
+    const signature = JSON.stringify({
+        id: active.id,
+        state: active.state,
+        geometry,
+        raw_trajectory: geometry.length >= 2 ? [] : rawTrajectory,
+        start_point: active.start_point,
+        end_point: active.end_point,
+        closure_distance: active.closure_distance,
+        closure_tolerance: active.closure_tolerance,
+    });
+    const color = active.type === 'no_go_zone' ? '#ff2222' : (
+        active.type === 'corridor' ? '#ff9900' : '#00ff99');
+    const layer = geometry.length < 2 || active.type === 'corridor'
+        ? L.polyline(latlngs, {
+            color,
+            weight: 4,
+            dashArray: '8,5',
+            pane: 'captureRoutePane',
+        })
+        : L.polygon(latlngs, {
+            color,
+            fillColor: color,
+            fillOpacity: 0.12,
+            weight: 3,
+            dashArray: '8,5',
+            pane: 'captureRoutePane',
+        });
+    layer.bindTooltip(
+        `预览 · ${captureTypeLabel(active.type)} · ${active.id} · ${active.state}`,
+    );
+    state.capturePreviewItems.addLayer(layer);
+    [
+        { point: active.start_point, label: '起点', color: '#00ff99' },
+        { point: active.end_point, label: '终点', color: '#ffcc00' },
+    ].forEach(({ point, label, color }) => {
+        if (!point || !Number.isFinite(Number(point.x))
+            || !Number.isFinite(Number(point.y))) return;
+        const [lat, lng] = approxLocalToGPS(Number(point.x), Number(point.y));
+        const marker = L.circleMarker([lat, lng], {
+            radius: 5,
+            color: '#fff',
+            weight: 2,
+            fillColor: color,
+            fillOpacity: 1.0,
+            pane: 'captureRoutePane',
+        });
+        marker.bindTooltip(`${label} · ${formatCapturePoint(point)}`);
+        state.capturePreviewItems.addLayer(marker);
+    });
+    const intersectionPoint = findSelfIntersectionPoint(active);
+    if (intersectionPoint) {
+        const [lat, lng] = approxLocalToGPS(
+            intersectionPoint.x,
+            intersectionPoint.y,
+        );
+        const marker = L.circleMarker([lat, lng], {
+            radius: 9,
+            color: '#fff',
+            weight: 2,
+            fillColor: '#ff2244',
+            fillOpacity: 1.0,
+            pane: 'captureRoutePane',
+        });
+        marker.bindTooltip(`⚠️ 自交点 · ${formatCapturePoint(intersectionPoint)}`);
+        state.capturePreviewItems.addLayer(marker);
+    }
+    if (active.state === 'ready'
+            && signature !== state._capturePreviewSignature) {
+        const bounds = state.capturePreviewItems.getBounds();
+        if (bounds.isValid()) map.fitBounds(bounds.pad(0.25), { maxZoom: 19 });
+    }
+    state._capturePreviewSignature = signature;
 }
 
 /**
@@ -693,6 +1191,13 @@ function approxLocalToGPS(x, y) {
     const lng = x / (111320.0 * Math.cos(GPS_ORIGIN_LAT_RAD)) + GPS_ORIGIN_LNG;
     const lat = y / 110540.0 + GPS_ORIGIN_LAT;
     return [lat, lng];
+}
+
+function approxGpsToLocal(lat, lng) {
+    const x = (lng - GPS_ORIGIN_LNG)
+        * 111320.0 * Math.cos(GPS_ORIGIN_LAT_RAD);
+    const y = (lat - GPS_ORIGIN_LAT) * 110540.0;
+    return [x, y];
 }
 
 // =============================================================
@@ -770,6 +1275,90 @@ function triggerStop() {
 // =============================================================
 // 发送区域到 ROS2（含障碍物）
 // =============================================================
+function publishPlannerSelection(selection) {
+    if (!state.connected) return false;
+    const topic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/web/mission',
+        messageType: 'std_msgs/String',
+    });
+    topic.publish(new ROSLIB.Message({
+        data: JSON.stringify(selection),
+    }));
+    return true;
+}
+
+function publishPlannerAreas(areaData, description) {
+    if (!state.connected || !areaData.length) return false;
+
+    publishPlannerSelection({ action: 'use_legacy_areas' });
+    const areaTopic = new ROSLIB.Topic({
+        ros: state.ros,
+        name: '/web/areas',
+        messageType: 'std_msgs/String',
+    });
+    areaTopic.publish(new ROSLIB.Message({
+        data: JSON.stringify({ action: 'set_areas', areas: areaData }),
+    }));
+
+    state.planningLoaded = true;
+    document.getElementById('btn-plan').disabled = false;
+    document.getElementById('btn-execute').disabled = true;
+    document.getElementById('mode-display').textContent = '⚙️ 已载入规划区域';
+    showToast(`📤 ${description}`, 'success');
+    return true;
+}
+
+function loadCaptureMissionForPlanning() {
+    const mission = state.mission || {};
+    const objects = Array.isArray(mission.objects) ? mission.objects : [];
+    const drafts = Array.isArray(mission.drafts) ? mission.drafts : [];
+    if (!objects.length) {
+        showToast('❌ 没有已确认的采集对象', 'error');
+        return;
+    }
+    if (drafts.length) {
+        showToast('❌ 仍有草稿对象，请先确认或取消草稿', 'error');
+        return;
+    }
+    const workAreas = objects.filter(item => item.type === 'work_area');
+    const corridors = objects.filter(item => item.type === 'corridor');
+    if (!workAreas.length) {
+        showToast('❌ 任务至少需要一个已确认作业区', 'error');
+        return;
+    }
+    const order = Array.isArray(mission.order) ? mission.order : [];
+    const executableIds = new Set([
+        ...workAreas.map(item => item.id),
+        ...corridors.map(item => item.id),
+    ]);
+    if (order.length !== executableIds.size
+        || new Set(order).size !== executableIds.size
+        || order.some(id => !executableIds.has(id))) {
+        showToast('❌ 采集任务顺序不完整，不能载入规划', 'error');
+        return;
+    }
+
+    try {
+        if (!publishPlannerSelection({
+            action: 'set_mission',
+            mission,
+        })) return;
+        state.planningLoaded = true;
+        document.getElementById('btn-plan').disabled = false;
+        document.getElementById('btn-execute').disabled = true;
+        document.getElementById('mode-display').textContent = '⚙️ 已载入规划任务';
+        showToast(
+            `📤 已载入 ${workAreas.length} 个作业区、`
+            + `${corridors.length} 个通道和 `
+            + `${objects.filter(item => item.type === 'no_go_zone').length} 个禁区；现在可以规划`,
+            'success',
+        );
+    } catch (error) {
+        showToast(`❌ 载入规划失败: ${error.message}`, 'error');
+    }
+}
+
 function sendAreasToROS() {
     if (!state.connected || (state.areas.length === 0 && state.obstacles.length === 0)) return;
 
@@ -794,18 +1383,10 @@ function sendAreasToROS() {
 
     console.log('[发送] areaData:', JSON.stringify(areaData, null, 2));
 
-    const areaTopic = new ROSLIB.Topic({
-        ros: state.ros,
-        name: '/web/areas',
-        messageType: 'std_msgs/String',
-    });
-    const msg = new ROSLIB.Message({
-        data: JSON.stringify({ action: 'set_areas', areas: areaData }),
-    });
-    areaTopic.publish(msg);
-
-    document.getElementById('btn-plan').disabled = false;
-    showToast(`📤 已发送 ${state.areas.length} 个区域 + ${state.obstacles.length} 个障碍物`, 'success');
+    publishPlannerAreas(
+        areaData,
+        `已发送 ${state.areas.length} 个区域 + ${state.obstacles.length} 个障碍物；现在可以规划`,
+    );
 }
 
 /** 射线法判断点是否在多边形内 */
@@ -832,6 +1413,10 @@ function isPolygonInside(innerLatLngs, outerLatLngs) {
 function triggerPlan() {
     if (!state.connected) {
         showToast('❌ 未连接到 ROS2', 'error');
+        return;
+    }
+    if (!state.planningLoaded) {
+        showToast('❌ 请先点击“载入规划”或“发送”', 'error');
         return;
     }
     const btn = document.getElementById('btn-plan');
@@ -979,7 +1564,12 @@ function updateSendButton() {
 // 按钮事件绑定
 // =============================================================
 let teleopInterval = null;
-let activeTeleopButton = null;
+let joystickPointerId = null;
+let joystickAxes = { x: 0, y: 0 };
+let joystickCommand = { linear: 0, angular: 0 };
+let teleopSpeed = Number(document.getElementById('teleop-speed').value) || 0.6;
+const TELEOP_MAX_ANGULAR = 1.2;
+const JOYSTICK_DEADZONE = 0.12;
 
 function publishTeleop(linear, angular) {
     if (!state.connected || !state.teleopTopic) return;
@@ -989,41 +1579,116 @@ function publishTeleop(linear, angular) {
     }));
 }
 
+function publishJoystickCommand() {
+    joystickCommand = {
+        linear: -joystickAxes.y * teleopSpeed,
+        angular: -joystickAxes.x * TELEOP_MAX_ANGULAR,
+    };
+    publishTeleop(joystickCommand.linear, joystickCommand.angular);
+}
+
+function resetJoystickVisual() {
+    const joystick = document.getElementById('teleop-joystick');
+    const stick = document.getElementById('teleop-stick');
+    joystick.classList.remove('active');
+    stick.style.transform = 'translate(-50%, -50%)';
+}
+
 function stopTeleop() {
     if (teleopInterval) {
         clearInterval(teleopInterval);
         teleopInterval = null;
     }
-    if (activeTeleopButton) activeTeleopButton.classList.remove('active');
-    activeTeleopButton = null;
+    joystickPointerId = null;
+    joystickAxes = { x: 0, y: 0 };
+    joystickCommand = { linear: 0, angular: 0 };
+    resetJoystickVisual();
     publishTeleop(0, 0);
 }
 
-function startTeleop(event) {
+function updateJoystickFromEvent(event) {
+    const joystick = document.getElementById('teleop-joystick');
+    const stick = document.getElementById('teleop-stick');
+    const rect = joystick.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const radius = Math.max(1, Math.min(rect.width, rect.height) / 2
+        - stick.offsetWidth / 2 - 4);
+    let dx = event.clientX - centerX;
+    let dy = event.clientY - centerY;
+    const distance = Math.hypot(dx, dy);
+    if (distance > radius) {
+        const scale = radius / distance;
+        dx *= scale;
+        dy *= scale;
+    }
+    stick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+    const rawX = dx / radius;
+    const rawY = dy / radius;
+    const rawMagnitude = Math.hypot(rawX, rawY);
+    if (rawMagnitude <= JOYSTICK_DEADZONE) {
+        joystickAxes = { x: 0, y: 0 };
+    } else {
+        const activeMagnitude = (rawMagnitude - JOYSTICK_DEADZONE)
+            / (1 - JOYSTICK_DEADZONE);
+        const scale = activeMagnitude / rawMagnitude;
+        joystickAxes = { x: rawX * scale, y: rawY * scale };
+    }
+    publishJoystickCommand();
+}
+
+function startJoystick(event) {
     event.preventDefault();
-    const button = event.currentTarget;
-    if (button.disabled || !state.captureState || !state.captureState.drive_allowed) return;
+    event.stopPropagation();
+    const joystick = event.currentTarget;
+    if (joystick.classList.contains('disabled')
+        || !state.captureState || !state.captureState.drive_allowed) return;
     stopTeleop();
-    activeTeleopButton = button;
-    button.classList.add('active');
-    const linear = Number(button.dataset.linear || 0);
-    const angular = Number(button.dataset.angular || 0);
-    publishTeleop(linear, angular);
-    teleopInterval = setInterval(() => publishTeleop(linear, angular), 100);
+    joystickPointerId = event.pointerId;
+    joystick.classList.add('active');
+    joystick.setPointerCapture(event.pointerId);
+    updateJoystickFromEvent(event);
+    teleopInterval = setInterval(publishJoystickCommand, 100);
+}
+
+function moveJoystick(event) {
+    if (event.pointerId !== joystickPointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    updateJoystickFromEvent(event);
 }
 
 document.getElementById('btn-capture-start').addEventListener('click', captureStart);
 document.getElementById('btn-capture-finish').addEventListener('click', captureFinish);
 document.getElementById('btn-capture-undo').addEventListener('click', captureUndo);
 document.getElementById('btn-capture-draft').addEventListener('click', captureSaveDraft);
+document.getElementById('btn-capture-retry').addEventListener('click', captureRetry);
+document.getElementById('btn-capture-manual-correct').addEventListener(
+    'click', captureManualCorrect);
+document.getElementById('btn-capture-correction-cancel').addEventListener(
+    'click', () => cancelCaptureManualCorrect());
 document.getElementById('btn-capture-confirm').addEventListener('click', captureConfirm);
 document.getElementById('btn-capture-cancel').addEventListener('click', captureCancel);
+document.getElementById('btn-capture-load-plan').addEventListener(
+    'click', loadCaptureMissionForPlanning);
 document.getElementById('capture-type').addEventListener('change', updateCaptureUI);
-document.querySelectorAll('.teleop-btn').forEach(button => {
-    button.addEventListener('pointerdown', startTeleop);
-    button.addEventListener('pointerup', stopTeleop);
-    button.addEventListener('pointercancel', stopTeleop);
-    button.addEventListener('pointerleave', stopTeleop);
+const joystick = document.getElementById('teleop-joystick');
+joystick.addEventListener('pointerdown', startJoystick);
+joystick.addEventListener('pointermove', moveJoystick);
+joystick.addEventListener('pointerup', stopTeleop);
+joystick.addEventListener('pointercancel', stopTeleop);
+joystick.addEventListener('lostpointercapture', stopTeleop);
+document.getElementById('teleop-stop').addEventListener('pointerdown', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    stopTeleop();
+});
+document.getElementById('teleop-speed').addEventListener('input', event => {
+    teleopSpeed = Number(event.target.value);
+    document.getElementById('teleop-speed-value').textContent =
+        `${teleopSpeed.toFixed(2)} m/s`;
+    if (joystickPointerId !== null) publishJoystickCommand();
 });
 window.addEventListener('blur', stopTeleop);
 document.addEventListener('visibilitychange', () => {
@@ -1049,6 +1714,8 @@ document.getElementById('btn-resume').addEventListener('click', triggerResume);
 document.getElementById('btn-stop').addEventListener('click', triggerStop);
 
 document.getElementById('btn-clear').addEventListener('click', function () {
+    cancelCaptureManualCorrect(false);
+    stopTeleop();
     // 1. 调用后端清除服务
     if (state.connected) {
         // 1a. 清除执行器路径（停止执行 + 清空 waypoints）
@@ -1086,6 +1753,8 @@ document.getElementById('btn-clear').addEventListener('click', function () {
     state.areas = [];
     state.obstacles = [];
     state.execMode = 'idle';
+    state.planningLoaded = false;
+    state._missionGeometrySignature = null;
     updateAreaList();
     updateSendButton();
     document.getElementById('btn-plan').disabled = true;

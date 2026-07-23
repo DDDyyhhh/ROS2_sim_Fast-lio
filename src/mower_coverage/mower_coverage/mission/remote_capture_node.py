@@ -135,6 +135,8 @@ class RemoteCaptureNode(Node):
                 self.store.start(data.get('type'), data.get('id'))
             elif action == 'finish':
                 self.store.finish(self.health_state)
+            elif action == 'manual_geometry':
+                self.store.set_manual_geometry(data.get('geometry'))
             elif action == 'undo':
                 self.store.undo()
             elif action == 'save_draft':
@@ -142,6 +144,9 @@ class RemoteCaptureNode(Node):
                 self._persist()
             elif action == 'cancel':
                 self.store.cancel()
+            elif action == 'delete':
+                self.store.delete_object(data.get('id'))
+                self._persist()
             elif action == 'confirm':
                 corridor = data.get('corridor')
                 active = self.store.session
@@ -167,8 +172,7 @@ class RemoteCaptureNode(Node):
         self.publish_all()
 
     def tick(self):
-        if (self.store.session is not None
-                and self.store.session.state == 'capturing'):
+        if self._sampling_allowed():
             self._record_latest_pose()
         self.publish_all()
 
@@ -229,12 +233,15 @@ class RemoteCaptureNode(Node):
             and time.monotonic() - self.latest_pose_at <= self.pose_timeout
         )
 
-    def _drive_allowed(self):
+    def _sampling_allowed(self):
         return (
             self.store.session is not None
-            and self.store.session.state == 'capturing'
-            and self.health_state == 'GREEN'
-            and self._is_pose_fresh()
+            and self.store.session.state in {'capturing', 'draft'}
+        )
+
+    def _drive_allowed(self):
+        return (
+            self.health_state == 'GREEN' and self._is_pose_fresh()
         )
 
     def publish_all(self):
@@ -246,6 +253,7 @@ class RemoteCaptureNode(Node):
             'health_reasons': list(self.health_reasons),
             'pose_fresh': self._is_pose_fresh(),
             'drive_allowed': self._drive_allowed(),
+            'sampling_allowed': self._sampling_allowed(),
             'last_error': self.last_error,
         }
         state_msg = String()

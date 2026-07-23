@@ -22,7 +22,19 @@ ros2 launch mower_coverage sensor_full.launch.py
 ros2 launch mower_coverage remote_capture_sim.launch.py
 ```
 
-启动 Gazebo、仿真 GNSS/RTK 天线状态、rosbridge、Web 和遥控采集向导；不启动规划器、执行器、CAN 或实机运动。方向遥控经 `/teleop/cmd_vel` 的 dead-man/超时门禁后只发布到仿真私有的 `/simulation/cmd_vel`，再由本 profile 的 Gazebo bridge 接收。
+启动 Gazebo、仿真 GNSS/RTK 天线状态、rosbridge、Web 和遥控采集向导；默认不启动规划器、执行器、CAN 或实机运动。确认作业区后，点击页面的“载入规划”，再点击底部“规划”。
+
+定位为 `GREEN` 且位姿新鲜时，即使没有正在采集的对象，Web 摇杆也可以移动仿真机器人；只有点击“开始采集”后的 `capturing/draft` 状态会记录原始轨迹。地图上的黄色箭头和位姿文字显示 `/odom` 车头方向。
+
+需要在仿真中继续测试规划和执行时，使用显式的规划 profile：
+
+```bash
+ros2 launch mower_coverage remote_capture_sim.launch.py \
+  with_planning_execution:=true \
+  with_lidar_scan:=true
+```
+
+此模式默认启动 `/scan` 安全链；执行命令仍经仿真命令仲裁器输出到 `/simulation/cmd_vel`，遥控输入是 `/simulation/teleop_cmd_vel`，自动路径输入是 `/simulation/plan_cmd_vel`，不发布全局 `/cmd_vel`。采集任务通过 `/web/mission` 进入新 planner，通道按已记录中心线和方向生成 transit 段；`/coverage/path_metadata` 标记通行段不计入覆盖率。`/scan` 缺失或不新鲜时仍会 fail-closed 停车。
 
 ## 旧入口
 

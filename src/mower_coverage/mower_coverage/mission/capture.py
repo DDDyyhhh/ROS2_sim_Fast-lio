@@ -1,7 +1,10 @@
 """State machine for one remote-captured mission object."""
 
 from copy import deepcopy
-from math import isfinite
+from math import hypot, isfinite
+
+from shapely.geometry import Polygon
+from shapely.validation import explain_validity
 
 from .model import GeometryResult, derive_effective_geometry
 
@@ -49,10 +52,12 @@ class CaptureSession:
         if self.state not in {'capturing', 'draft'}:
             raise RuntimeError('capture session is not capturing')
 
+        was_draft = self.state == 'draft'
         normalized = self._normalize_sample(sample)
         self._raw_trajectory.append(normalized)
-        self._result = None
-        self.state = 'capturing'
+        if not was_draft:
+            self._result = None
+            self.state = 'capturing'
         return self.snapshot()
 
     def finish(self, current_health_state=None):
@@ -73,6 +78,52 @@ class CaptureSession:
         )
         self.state = (
             'ready' if self._result.status == 'ready' else 'draft')
+        return self.snapshot()
+
+    def set_manual_geometry(self, geometry):
+        """Replace effective closed geometry without changing raw evidence."""
+        if self.state not in {'draft', 'ready'}:
+            raise RuntimeError('manual geometry requires a finished capture')
+        if self.object_type == 'corridor':
+            raise RuntimeError('manual geometry is only for closed objects')
+        if any(
+            isinstance(sample, dict)
+            and sample.get('localization_ok') is False
+            for sample in self._raw_trajectory
+        ):
+            raise ValueError(
+                'manual geometry cannot override unhealthy localization')
+
+        try:
+            points = tuple(
+                (float(point[0]), float(point[1]))
+                for point in geometry
+            )
+        except (IndexError, TypeError, ValueError):
+            raise ValueError('manual geometry points are invalid')
+        if len(points) < 3 or any(
+            not isfinite(value) for point in points for value in point
+        ):
+            raise ValueError('manual geometry needs three finite points')
+        if points[0] != points[-1]:
+            points += (points[0],)
+
+        polygon = Polygon(points)
+        if not polygon.is_valid or polygon.area <= 0.0:
+            validity = explain_validity(polygon)
+            issue = validity if validity and validity != 'Valid Geometry' else 'empty area'
+            raise ValueError(f'manual geometry is invalid: {issue}')
+
+        effective_geometry = tuple(
+            (float(x), float(y)) for x, y in polygon.exterior.coords
+        )
+        self._result = GeometryResult(
+            'ready',
+            effective_geometry,
+            (),
+            tuple(self._raw_trajectory),
+        )
+        self.state = 'ready'
         return self.snapshot()
 
     def undo(self):
@@ -158,6 +209,7 @@ class CaptureSession:
             'geometry': [list(point) for point in geometry],
             'issues': list(issues),
             'corridor_metadata': deepcopy(self._corridor_metadata),
+            **self._closure_feedback(),
         }
 
     def _mission_object(self, status):
@@ -171,6 +223,10 @@ class CaptureSession:
             'raw_trajectory': snapshot['raw_trajectory'],
             'source': 'remote_capture',
             'issues': snapshot['issues'],
+            'start_point': snapshot['start_point'],
+            'end_point': snapshot['end_point'],
+            'closure_distance': snapshot['closure_distance'],
+            'closure_tolerance': snapshot['closure_tolerance'],
         }
         if self.object_type == 'corridor':
             result.update(deepcopy(self._corridor_metadata))
@@ -224,3 +280,35 @@ class CaptureSession:
             tuple(self._raw_trajectory),
         )
         self.state = 'draft'
+
+    def _closure_feedback(self):
+        tolerance = self.geometry_profile.get('closure_tolerance')
+        try:
+            tolerance = float(tolerance)
+        except (TypeError, ValueError):
+            tolerance = None
+        if tolerance is not None and (
+                not isfinite(tolerance) or tolerance < 0.0):
+            tolerance = None
+
+        if not self._raw_trajectory:
+            return {
+                'start_point': None,
+                'end_point': None,
+                'closure_distance': None,
+                'closure_tolerance': tolerance,
+            }
+
+        start = self._raw_trajectory[0]
+        end = self._raw_trajectory[-1]
+        start_point = {'x': float(start['x']), 'y': float(start['y'])}
+        end_point = {'x': float(end['x']), 'y': float(end['y'])}
+        return {
+            'start_point': start_point,
+            'end_point': end_point,
+            'closure_distance': hypot(
+                end_point['x'] - start_point['x'],
+                end_point['y'] - start_point['y'],
+            ),
+            'closure_tolerance': tolerance,
+        }

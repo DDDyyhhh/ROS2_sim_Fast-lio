@@ -5,6 +5,7 @@ from math import hypot, isfinite
 
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import unary_union
+from shapely.validation import explain_validity
 
 
 @dataclass(frozen=True)
@@ -103,8 +104,12 @@ def derive_effective_geometry(raw_trajectory, object_type, profile):
     polygon = Polygon(filtered_points)
     polygon = polygon.simplify(simplify_tolerance, preserve_topology=True)
     if not polygon.is_valid or polygon.area <= 0.0:
+        validity = explain_validity(polygon)
+        issue = 'trajectory does not form a valid polygon'
+        if validity and validity != 'Valid Geometry':
+            issue = f'{issue}: {validity}'
         return GeometryResult(
-            'invalid', (), ('trajectory does not form a valid polygon',), samples)
+            'invalid', (), (issue,), samples)
 
     geometry = tuple((float(x), float(y)) for x, y in polygon.exterior.coords)
     return GeometryResult('ready', geometry, (), samples)
@@ -141,6 +146,7 @@ def validate_mission(mission, profile):
     work_areas = []
     no_go_zones = []
     corridors = []
+    objects_by_id = {}
     for item in objects:
         if not isinstance(item, dict):
             issues.append('mission object must be an object')
@@ -153,6 +159,7 @@ def validate_mission(mission, profile):
             issues.append(f'duplicate object id: {object_id}')
         else:
             seen_ids.add(object_id)
+            objects_by_id[object_id] = item
         if object_type not in allowed_types:
             issues.append(f'unknown object type: {object_type}')
             continue
@@ -179,6 +186,8 @@ def validate_mission(mission, profile):
         elif object_type == 'no_go_zone':
             no_go_zones.append(shape)
         elif object_type == 'corridor':
+            if not isinstance(item.get('bidirectional'), bool):
+                issues.append(f'corridor direction metadata is invalid: {object_id}')
             corridors.append((object_id, shape, item))
 
     for index, (left_id, left) in enumerate(work_areas):
@@ -262,6 +271,36 @@ def validate_mission(mission, profile):
     ):
         issues.append(
             'mission order must contain every executable object exactly once')
+
+    if (
+        isinstance(order, list)
+        and all(isinstance(item, str) for item in order)
+        and len(order) == len(set(order))
+        and set(order) == executable_ids
+    ):
+        for index, object_id in enumerate(order):
+            item = objects_by_id[object_id]
+            if item.get('type') != 'corridor':
+                continue
+            if index == 0 or index == len(order) - 1:
+                issues.append(
+                    f'corridor must be between work areas: {object_id}')
+                continue
+
+            before_id = order[index - 1]
+            after_id = order[index + 1]
+            from_id = item.get('from_work_area_id')
+            to_id = item.get('to_work_area_id')
+            forward = before_id == from_id and after_id == to_id
+            reverse = (
+                item.get('bidirectional') is True
+                and before_id == to_id
+                and after_id == from_id
+            )
+            if not (forward or reverse):
+                issues.append(
+                    f'corridor direction does not match mission order: '
+                    f'{object_id}')
 
     return ValidationResult(not issues, tuple(issues), effective_geometry)
 

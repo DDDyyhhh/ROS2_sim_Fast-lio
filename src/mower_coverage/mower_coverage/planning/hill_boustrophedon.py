@@ -23,7 +23,7 @@ from rclpy.node import Node
 from std_srvs.srv import Trigger
 from geometry_msgs.msg import Point, Pose, PoseStamped, PoseArray, Quaternion
 from visualization_msgs.msg import Marker, MarkerArray
-from std_msgs.msg import ColorRGBA, Header
+from std_msgs.msg import ColorRGBA, Header, String
 from nav_msgs.msg import Path
 from shapely.geometry import Polygon, LineString, Point as ShapelyPoint, box
 from shapely.ops import unary_union
@@ -35,6 +35,7 @@ from mower_coverage.mission.loader import (
     load_mission_file,
     mission_to_legacy_areas,
 )
+from mower_coverage.mission.model import validate_mission
 
 
 def polyline_to_path(waypoints, frame_id, stamp):
@@ -85,6 +86,13 @@ class HillBoustrophedon(Node):
             ('terrain_slow_factor', 0.5),
             ('inter_area_speed', 0.5),
             ('area_file', state_file('hill_mowing_areas.yaml')),
+            ('mission_topic', '/web/mission'),
+            # These dimensions describe the offline simulation model.  A
+            # real-robot profile must be supplied explicitly before hardware
+            # acceptance.
+            ('robot_length', 0.4),
+            ('robot_width', 0.3),
+            ('safety_margin', 0.1),
         ]
         for name, default in param_defaults:
             if not self.has_parameter(name):
@@ -99,6 +107,11 @@ class HillBoustrophedon(Node):
         self.slow_factor = self.get_parameter('terrain_slow_factor').value
         self.transit_speed = self.get_parameter('inter_area_speed').value
         self.area_file = self.get_parameter('area_file').value
+        self.mission_topic = self.get_parameter('mission_topic').value
+        self.robot_length = float(self.get_parameter('robot_length').value)
+        self.robot_width = float(self.get_parameter('robot_width').value)
+        self.safety_margin = float(self.get_parameter('safety_margin').value)
+        self.selected_mission = None
 
         self.swath_spacing = self.cutting_width * (1.0 - self.overlap)
 
@@ -106,12 +119,16 @@ class HillBoustrophedon(Node):
         self.path_pub = self.create_publisher(Path, '/coverage/multi_path', 10)
         self.poses_pub = self.create_publisher(PoseArray, '/coverage/multi_path_poses', 10)
         self.marker_pub = self.create_publisher(MarkerArray, '/coverage/multi_path_markers', 10)
+        self.path_metadata_pub = self.create_publisher(
+            String, '/coverage/path_metadata', 10)
 
         # 服务
         self.srv_plan = self.create_service(
             Trigger, '/multi_area/plan', self.plan_cb)
         self.srv_clear_path = self.create_service(
             Trigger, '/multi_area/clear_path', self.clear_path_cb)
+        self.mission_selection_sub = self.create_subscription(
+            String, self.mission_topic, self.mission_selection_callback, 10)
 
         self.get_logger().info('多区域牛耕式规划器已启动')
         self.get_logger().info(f'  割幅: {self.cutting_width}m, 重叠: {self.overlap*100:.0f}%')
@@ -119,9 +136,32 @@ class HillBoustrophedon(Node):
         # 保存最后规划的路径（供执行器获取 + RViz 周期可视化）
         self.last_waypoints = []  # [(x, y, speed), ...]
         self.last_obstacles = []  # 当前规划中的膨胀障碍物，用于前端路径降采样保形
+        self.mandatory_path_points = set()
+        self.transit_path_points = set()
 
         # 可视化定时器（1Hz — RViz Volatile QoS 需要周期性消息）
         self.viz_timer = self.create_timer(1.0, self.republish_path_viz)
+
+    def mission_selection_callback(self, msg):
+        """Select either the captured mission or the legacy area input."""
+        try:
+            data = json.loads(msg.data)
+        except (TypeError, json.JSONDecodeError):
+            self.get_logger().error('规划任务选择消息不是有效 JSON')
+            return
+
+        action = data.get('action') if isinstance(data, dict) else None
+        if action == 'set_mission':
+            mission = data.get('mission')
+            if not isinstance(mission, dict):
+                self.get_logger().error('规划任务选择消息缺少 mission')
+                return
+            self.selected_mission = mission
+            return
+        if action == 'use_legacy_areas':
+            self.selected_mission = None
+            return
+        self.get_logger().error(f'未知规划任务选择 action: {action}')
 
     # ==============================================================
     # 核心规划算法
@@ -448,6 +488,141 @@ class HillBoustrophedon(Node):
             (nearest.x, nearest.y, self.transit_speed),
         ]
 
+    def plan_from_mission(self, mission, robot_length=None,
+                          robot_width=None, safety_margin=None):
+        """Plan a confirmed mission, preserving recorded corridor geometry.
+
+        The legacy ``plan_from_areas`` API remains available for old YAML
+        files.  Captured missions use their explicit execution order: work
+        areas produce coverage paths and corridors produce transit paths.
+        """
+        profile = {
+            'robot_length': self.robot_length if robot_length is None
+            else robot_length,
+            'robot_width': self.robot_width if robot_width is None
+            else robot_width,
+            'safety_margin': self.safety_margin if safety_margin is None
+            else safety_margin,
+        }
+        validation = validate_mission(mission, profile)
+        if not validation.valid:
+            raise ValueError(
+                'mission cannot be planned: ' + '; '.join(validation.issues))
+
+        objects = {item['id']: item for item in mission['objects']}
+        for previous_id, current_id in zip(
+                mission['order'], mission['order'][1:]):
+            if (
+                objects[previous_id]['type'] == 'work_area'
+                and objects[current_id]['type'] == 'work_area'
+            ):
+                raise ValueError(
+                    'mission order requires an explicit corridor between '
+                    f'work areas: {previous_id} → {current_id}')
+
+        no_go_rings = [
+            item['geometry'] for item in mission['objects']
+            if item['type'] == 'no_go_zone'
+        ]
+        obstacles = [
+            Polygon(ring).buffer(self.inner_inflate)
+            for ring in no_go_rings
+        ]
+
+        work_paths = {}
+        for item in mission['objects']:
+            if item['type'] != 'work_area':
+                continue
+            work_area = Polygon(item['geometry'])
+            waypoints = self.plan_area(
+                work_area,
+                no_go_rings,
+                item.get('cutting_angle', 0.0),
+                item.get('max_speed', 1.0),
+            )
+            if not waypoints:
+                raise RuntimeError(
+                    f'work area has no safe coverage path: {item["id"]}')
+            work_paths[item['id']] = waypoints
+
+        def append_unique(points, target):
+            for point in points:
+                if not target or target[-1][:2] != point[:2]:
+                    target.append(point)
+
+        def segment_is_blocked(a, b):
+            line = LineString([a[:2], b[:2]])
+            return any(
+                line.crosses(obstacle)
+                or line.within(obstacle)
+                or obstacle.contains(line)
+                for obstacle in obstacles
+            )
+
+        all_waypoints = []
+        mandatory_path_points = set()
+        transit_path_points = set()
+        previous_point = None
+        order = mission['order']
+        for index, object_id in enumerate(order):
+            item = objects[object_id]
+            if item['type'] == 'work_area':
+                waypoints = work_paths[object_id]
+                if previous_point is None:
+                    append_unique(waypoints, all_waypoints)
+                else:
+                    connection = self._fix_obstacle_crossings(
+                        [previous_point, waypoints[0]],
+                        obstacles,
+                        self.transit_speed,
+                    )
+                    if connection[-1][:2] != waypoints[0][:2]:
+                        raise RuntimeError(
+                            f'cannot safely enter work area: {object_id}')
+                    transit_path_points.update(point[:2] for point in connection)
+                    append_unique(connection, all_waypoints)
+                    append_unique(waypoints[1:], all_waypoints)
+                previous_point = waypoints[-1]
+                continue
+
+            centerline = [
+                (float(point[0]), float(point[1]), self.transit_speed)
+                for point in item['geometry']
+            ]
+            mandatory_path_points.update(point[:2] for point in centerline)
+            if order[index - 1] == item['to_work_area_id']:
+                centerline.reverse()
+            if any(
+                segment_is_blocked(centerline[i - 1], centerline[i])
+                for i in range(1, len(centerline))
+            ):
+                raise RuntimeError(
+                    f'corridor is blocked by a no-go zone: {object_id}')
+
+            if previous_point is None:
+                raise RuntimeError(
+                    f'corridor has no preceding work area: {object_id}')
+            connection = self._fix_obstacle_crossings(
+                [previous_point, centerline[0]],
+                obstacles,
+                self.transit_speed,
+            )
+            if connection[-1][:2] != centerline[0][:2]:
+                raise RuntimeError(
+                    f'cannot safely enter corridor: {object_id}')
+            transit_path_points.update(point[:2] for point in connection)
+            transit_path_points.update(point[:2] for point in centerline)
+            append_unique(connection, all_waypoints)
+            append_unique(centerline[1:], all_waypoints)
+            previous_point = centerline[-1]
+
+        self.last_waypoints = all_waypoints
+        self.last_obstacles = obstacles
+        self.mandatory_path_points = mandatory_path_points
+        self.transit_path_points = transit_path_points
+        self.publish_path(all_waypoints)
+        return all_waypoints
+
     # ==============================================================
     # 服务回调
     # ==============================================================
@@ -458,46 +633,59 @@ class HillBoustrophedon(Node):
         """
         # 读取区域 YAML 文件
         area_file = readable_path(self.area_file, 'hill_mowing_areas.yaml')
-        if not os.path.exists(area_file):
+        if self.selected_mission is None and not os.path.exists(area_file):
             resp.success = False
             resp.message = f'区域文件不存在: {area_file}'
             self.get_logger().error(resp.message)
             return resp
 
         try:
-            data = mission_to_legacy_areas(load_mission_file(area_file))
-            if not data['areas']:
-                resp.success = False
-                resp.message = 'YAML 文件中没有区域数据'
-                return resp
+            if self.selected_mission is not None:
+                waypoints = self.plan_from_mission(self.selected_mission)
+                work_area_count = sum(
+                    item.get('type') == 'work_area'
+                    for item in self.selected_mission.get('objects', [])
+                )
+                resp.success = True
+                resp.message = (
+                    f'规划完成: {work_area_count} 个作业区, '
+                    f'{len(waypoints)} 个路径点（含通道）')
+            else:
+                data = mission_to_legacy_areas(load_mission_file(area_file))
+                if not data['areas']:
+                    resp.success = False
+                    resp.message = 'YAML 文件中没有区域数据'
+                    return resp
 
-            # 格式化为 areas_dict
-            areas_dict = {}
-            for entry in data['areas']:
-                name = entry.get('name', f'area_{len(areas_dict)}')
-                pts = entry.get('points', [])
-                if len(pts) < 3:
-                    continue
-                areas_dict[name] = {
-                    'points': [(float(x), float(y)) for x, y in pts],
-                    'inner_rings': [
-                        [(float(x), float(y)) for x, y in ring]
-                        for ring in entry.get('inner_rings', [])
-                    ],
-                    'cutting_angle': entry.get('cutting_angle', 0.0),
-                    'max_speed': entry.get('max_speed', 1.0),
-                }
+                # 格式化为 areas_dict
+                areas_dict = {}
+                for entry in data['areas']:
+                    name = entry.get('name', f'area_{len(areas_dict)}')
+                    pts = entry.get('points', [])
+                    if len(pts) < 3:
+                        continue
+                    areas_dict[name] = {
+                        'points': [(float(x), float(y)) for x, y in pts],
+                        'inner_rings': [
+                            [(float(x), float(y)) for x, y in ring]
+                            for ring in entry.get('inner_rings', [])
+                        ],
+                        'cutting_angle': entry.get('cutting_angle', 0.0),
+                        'max_speed': entry.get('max_speed', 1.0),
+                    }
 
-            if not areas_dict:
-                resp.success = False
-                resp.message = '没有有效的区域'
-                return resp
+                if not areas_dict:
+                    resp.success = False
+                    resp.message = '没有有效的区域'
+                    return resp
 
-            # 执行规划
-            waypoints = self.plan_from_areas(areas_dict)
-            self.get_logger().info(f'规划完成: 共 {len(waypoints)} 个路径点')
-            resp.success = True
-            resp.message = f'规划完成: {len(areas_dict)} 个区域, {len(waypoints)} 个路径点'
+                waypoints = self.plan_from_areas(areas_dict)
+                self.get_logger().info(
+                    f'规划完成: 共 {len(waypoints)} 个路径点')
+                resp.success = True
+                resp.message = (
+                    f'规划完成: {len(areas_dict)} 个区域, '
+                    f'{len(waypoints)} 个路径点')
 
         except Exception as e:
             resp.success = False
@@ -511,6 +699,8 @@ class HillBoustrophedon(Node):
     def clear_path_cb(self, req, resp):
         """清除已规划的路径 — 停止 1Hz 重发"""
         self.last_waypoints = []
+        self.mandatory_path_points = set()
+        self.transit_path_points = set()
         resp.success = True
         resp.message = '已清除规划路径'
         self.get_logger().info('🧹 已清除规划路径（停止重发）')
@@ -597,6 +787,8 @@ class HillBoustrophedon(Node):
 
         self.last_waypoints = all_waypoints
         self.last_obstacles = all_obstacles
+        self.mandatory_path_points = set()
+        self.transit_path_points = set()
         self.publish_path(all_waypoints)
         return all_waypoints
 
@@ -627,10 +819,12 @@ class HillBoustrophedon(Node):
             next_pt = wps[i + 1]
 
             speed_changed = curr_pt[2] != prev_pt[2] or curr_pt[2] != next_pt[2]
+            mandatory = curr_pt[:2] in getattr(
+                self, 'mandatory_path_points', set())
             would_skip_into_obstacle = self._segment_hits_obstacle(result[-1], next_pt)
             due_by_step = i - last_keep_idx >= step
 
-            if speed_changed or would_skip_into_obstacle or due_by_step:
+            if mandatory or speed_changed or would_skip_into_obstacle or due_by_step:
                 result.append(curr_pt)
                 last_keep_idx = i
 
@@ -644,7 +838,7 @@ class HillBoustrophedon(Node):
         stamp = self.get_clock().now().to_msg()
 
         # 降采样路径点（原始路径保留在 last_waypoints 供执行器使用）
-        viz_wps = self._downsample(waypoints, step=10)
+        viz_wps = self._safe_downsample(waypoints)
 
         # nav_msgs/Path（供前端 rosbridge 使用）
         path_msg = polyline_to_path(viz_wps, self.frame_id, stamp)
@@ -685,6 +879,7 @@ class HillBoustrophedon(Node):
         markers.markers.append(line)
 
         self.marker_pub.publish(markers)
+        self.publish_path_metadata(viz_wps)
 
         self.get_logger().info(f'已发布路径: {len(waypoints)} 点 → 降采样 {len(viz_wps)} 点')
 
@@ -694,7 +889,7 @@ class HillBoustrophedon(Node):
             return
 
         stamp = self.get_clock().now().to_msg()
-        viz_wps = self._downsample(self.last_waypoints, step=10)
+        viz_wps = self._safe_downsample(self.last_waypoints)
 
         # 重发 nav_msgs/Path（给前端 rosbridge 等晚加入订阅者）
         path_msg = polyline_to_path(viz_wps, self.frame_id, stamp)
@@ -735,6 +930,46 @@ class HillBoustrophedon(Node):
         markers.markers.append(line)
 
         self.marker_pub.publish(markers)
+        self.publish_path_metadata(viz_wps)
+
+    def publish_path_metadata(self, waypoints):
+        """Publish coverage/transit labels for the matching path points."""
+        kinds = [
+            'transit' if point[:2] in getattr(
+                self, 'transit_path_points', set()) else 'coverage'
+            for point in waypoints
+        ]
+        segments = []
+        for index, kind in enumerate(kinds):
+            if not segments or segments[-1]['kind'] != kind:
+                segments.append({
+                    'kind': kind,
+                    'start_index': index,
+                    'end_index': index,
+                })
+            else:
+                segments[-1]['end_index'] = index
+
+        message = String()
+        message.data = json.dumps({
+            'frame_id': self.frame_id,
+            'path_signature': [[point[0], point[1]] for point in waypoints],
+            'waypoint_types': kinds,
+            'segments': segments,
+        })
+        self.path_metadata_pub.publish(message)
+
+    def _safe_downsample(self, waypoints):
+        """Downsample only when the resulting polyline remains obstacle-safe."""
+        sampled = self._downsample(waypoints, step=10)
+        if any(
+            self._segment_hits_obstacle(sampled[index - 1], sampled[index])
+            for index in range(1, len(sampled))
+        ):
+            self.get_logger().warn(
+                '降采样路径未通过障碍物复验，发布完整路径')
+            return waypoints
+        return sampled
 
     # ==============================================================
     # 几何工具

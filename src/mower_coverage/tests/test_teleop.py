@@ -11,7 +11,7 @@ from mower_coverage.teleop import TeleopCommand, TeleopGate
 
 
 class TeleopGateTests(unittest.TestCase):
-    def test_gate_blocks_until_capture_is_active(self):
+    def test_gate_blocks_until_movement_is_allowed(self):
         gate = TeleopGate()
         gate.accept(TeleopCommand(0.3, 0.4), now=1.0)
 
@@ -37,6 +37,13 @@ class TeleopGateTests(unittest.TestCase):
         gate.accept(TeleopCommand(2.0, -2.0), now=1.0)
 
         self.assertEqual(gate.output(1.1), TeleopCommand(0.5, -1.0))
+
+    def test_default_limit_supports_two_meters_per_second(self):
+        gate = TeleopGate()
+        gate.set_allowed(True)
+        gate.accept(TeleopCommand(2.4, 0.0), now=1.0)
+
+        self.assertEqual(gate.output(1.1), TeleopCommand(2.0, 0.0))
 
 
 if __name__ == '__main__':

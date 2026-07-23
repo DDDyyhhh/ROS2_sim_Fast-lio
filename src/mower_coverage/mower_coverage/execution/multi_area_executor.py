@@ -47,6 +47,7 @@ class MultiAreaExecutor(Node):
             ('checkpoint_file', state_file('hill_coverage_checkpoint.json')),
             ('max_linear_speed', 1.0),
             ('max_angular_speed', 1.0),
+            ('cmd_vel_topic', '/cmd_vel'),
             ('execution_mode', 'safe'),          # direct | safe
             ('obstacle_stop_range', 0.8),         # 前方 0.8m 内有障碍物 → 停车
             ('obstacle_scan_angle', 60.0),        # 前方 ±30° 扫描范围（度）
@@ -61,6 +62,7 @@ class MultiAreaExecutor(Node):
         self.checkpoint_file = self.get_parameter('checkpoint_file').value
         self.max_linear = self.get_parameter('max_linear_speed').value
         self.max_angular = self.get_parameter('max_angular_speed').value
+        self.cmd_vel_topic = self.get_parameter('cmd_vel_topic').value
         self.execution_mode = self.get_parameter('execution_mode').value
         self.obstacle_stop_range = self.get_parameter('obstacle_stop_range').value
         self.obstacle_scan_angle = self.get_parameter('obstacle_scan_angle').value
@@ -77,6 +79,11 @@ class MultiAreaExecutor(Node):
         self.robot_yaw = 0.0       # 机器人朝向（弧度）
         self.area_names = []
         self.path_received = False
+        self.path_signature = None
+        self.pending_path_metadata = None
+        self.waypoint_is_coverage = []
+        self.coverage_total = 0
+        self.coverage_completed = 0
 
         # LiDAR 避障状态
         self.latest_scan = None
@@ -93,7 +100,7 @@ class MultiAreaExecutor(Node):
             Odometry, '/odom', self.odom_callback, 10)
 
         # 速度发布
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.cmd_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
 
         # 覆盖可视化
         self.marker_pub = self.create_publisher(
@@ -106,6 +113,9 @@ class MultiAreaExecutor(Node):
         # 路径订阅（接收 planner 发布的多区域路径）
         self.path_sub = self.create_subscription(
             Path, '/coverage/multi_path', self.path_callback, 10)
+        self.path_metadata_sub = self.create_subscription(
+            String, '/coverage/path_metadata',
+            self.path_metadata_callback, 10)
 
         # LiDAR 扫描订阅（避障用）
         if self.execution_mode == 'safe':
@@ -224,15 +234,54 @@ class MultiAreaExecutor(Node):
             wps.append((ps.pose.position.x, ps.pose.position.y, 1.0))
         if wps:
             path_len = len(wps)
-            # 如果正在执行且路径一样 → 不重置进度（防 1Hz 重发导致归零）
-            if self.executing and path_len == self.total_waypoints:
+            signature = tuple((point[0], point[1]) for point in wps)
+            # 规划器会周期重发相同路径。无论执行中还是刚完成，都不能
+            # 因为这类重发把进度重新置零；只有真正的新路径才重置。
+            if self.path_received and signature == self.path_signature:
                 self.waypoints = wps  # 仍然更新路径点（可能有微小优化）
+                self._apply_path_metadata()
                 return
             self.waypoints = wps
             self.total_waypoints = path_len
             self.current_index = 0
             self.path_received = True
+            self.path_signature = signature
+            self.waypoint_is_coverage = [True] * path_len
+            self.coverage_total = path_len
+            self.coverage_completed = 0
+            self._apply_path_metadata()
             self.get_logger().info(f'已接收路径: {path_len} 个路径点')
+
+    def path_metadata_callback(self, msg):
+        """Apply coverage/transit labels published for the current Path."""
+        try:
+            data = json.loads(msg.data)
+            signature = tuple(
+                (float(point[0]), float(point[1]))
+                for point in data['path_signature']
+            )
+            kinds = data['waypoint_types']
+            if len(signature) != len(kinds):
+                raise ValueError('path metadata length mismatch')
+            if any(kind not in {'coverage', 'transit'} for kind in kinds):
+                raise ValueError('path metadata kind is invalid')
+            self.pending_path_metadata = (signature, kinds)
+            self._apply_path_metadata()
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            self.get_logger().warn(f'路径元数据被忽略: {error}')
+
+    def _apply_path_metadata(self):
+        pending = getattr(self, 'pending_path_metadata', None)
+        if pending is None or pending[0] != getattr(
+                self, 'path_signature', None):
+            return
+        kinds = pending[1]
+        if len(kinds) != len(self.waypoints):
+            return
+        self.waypoint_is_coverage = [kind == 'coverage' for kind in kinds]
+        self.coverage_total = sum(self.waypoint_is_coverage)
+        self.coverage_completed = sum(
+            self.waypoint_is_coverage[:self.current_index])
 
     def plan_and_start_cb(self, req, resp):
         """开始执行已有路径（需先调用 /multi_area/plan）"""
@@ -250,6 +299,7 @@ class MultiAreaExecutor(Node):
         self.current_index = 0
         self._paused = True          # ← 开始后可暂停
         self.obstacle_brake_count = 0
+        self.coverage_completed = 0
         resp.success = True
         resp.message = f'开始执行: {len(self.waypoints)} 个路径点'
         self.get_logger().info(resp.message)
@@ -268,6 +318,7 @@ class MultiAreaExecutor(Node):
         self._paused = False         # ← 停止：不可恢复
         self.current_index = 0
         self.covered_positions = []
+        self.coverage_completed = 0
         self._stop_robot()
         self.save_checkpoint()
         resp.success = True
@@ -313,6 +364,11 @@ class MultiAreaExecutor(Node):
         self.total_waypoints = 0
         self.covered_positions = []
         self.path_received = False
+        self.path_signature = None
+        self.pending_path_metadata = None
+        self.waypoint_is_coverage = []
+        self.coverage_total = 0
+        self.coverage_completed = 0
         self.completed_areas = []
         self.area_names = []
         self.clear_checkpoint()
@@ -379,7 +435,12 @@ class MultiAreaExecutor(Node):
 
         if distance < self.goal_tolerance:
             self.current_index += 1
-            self.covered_positions.append((tx, ty))
+            if (
+                self.current_index - 1 < len(self.waypoint_is_coverage)
+                and self.waypoint_is_coverage[self.current_index - 1]
+            ):
+                self.covered_positions.append((tx, ty))
+                self.coverage_completed += 1
             if self.current_index % 50 == 0:
                 self.get_logger().info(
                     f'  进度: {self.current_index}/{len(self.waypoints)}')
@@ -420,6 +481,12 @@ class MultiAreaExecutor(Node):
     # ==============================================================
     def set_waypoints(self, waypoints, area_names=None):
         self.waypoints = waypoints
+        self.path_signature = tuple((point[0], point[1]) for point in waypoints)
+        self.path_received = bool(waypoints)
+        self.pending_path_metadata = None
+        self.waypoint_is_coverage = [True] * len(waypoints)
+        self.coverage_total = len(waypoints)
+        self.coverage_completed = 0
         if area_names:
             self.area_names = area_names
         self.current_index = 0
@@ -508,8 +575,8 @@ class MultiAreaExecutor(Node):
 
     def publish_statistics(self):
         """发布覆盖率统计到 /coverage/statistics 话题"""
-        total = max(self.total_waypoints, 1)
-        covered = min(self.current_index, total)
+        total = max(self.coverage_total, 1)
+        covered = min(self.coverage_completed, total)
         pct = (covered / total) * 100.0
 
         stat = {
@@ -519,6 +586,12 @@ class MultiAreaExecutor(Node):
             'total': total,
             'remaining': total - covered,
             'mode': 'executing' if self.executing else 'idle',
+            'safety_stop_reason': (
+                'scan_unavailable'
+                if self.execution_mode == 'safe' and not self._scan_is_fresh()
+                else 'obstacle' if self.obstacle_detected else ''
+            ),
+            'obstacle_distance': round(self.obstacle_distance, 2),
         }
 
         msg = String()

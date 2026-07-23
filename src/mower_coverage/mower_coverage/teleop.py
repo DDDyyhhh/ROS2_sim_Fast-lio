@@ -10,9 +10,9 @@ class TeleopCommand:
 
 
 class TeleopGate:
-    """Allow a command only while capture is active and input is fresh."""
+    """Allow a command while the upstream movement gate is open and fresh."""
 
-    def __init__(self, timeout=0.4, max_linear=0.6, max_angular=1.2):
+    def __init__(self, timeout=0.4, max_linear=2.0, max_angular=1.2):
         if timeout <= 0.0 or max_linear <= 0.0 or max_angular <= 0.0:
             raise ValueError('teleop limits must be positive')
         self.timeout = float(timeout)

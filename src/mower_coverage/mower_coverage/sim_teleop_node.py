@@ -17,10 +17,10 @@ class SimulationTeleopNode(Node):
     def __init__(self):
         super().__init__('simulation_teleop')
         self.declare_parameter('input_topic', '/teleop/cmd_vel')
-        self.declare_parameter('output_topic', '/simulation/cmd_vel')
+        self.declare_parameter('output_topic', '/simulation/teleop_cmd_vel')
         self.declare_parameter('allowed_topic', '/mission/capture/drive_allowed')
         self.declare_parameter('command_timeout', 0.4)
-        self.declare_parameter('max_linear_speed', 0.6)
+        self.declare_parameter('max_linear_speed', 2.0)
         self.declare_parameter('max_angular_speed', 1.2)
 
         self.gate = TeleopGate(

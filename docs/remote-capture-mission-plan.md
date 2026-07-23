@@ -14,7 +14,7 @@
 - `work_areas`：闭合作业区边界。
 - `no_go_zones`：闭合禁区边界。
 - `corridors`：开放中心线、起止区域、通道宽度、双向标志。
-- 按采集顺序保存并执行多个区域；通道只通行、不计入覆盖率。
+- 按采集顺序保存并执行多个作业区；确认通道时，若其起止作业区当前相邻，则自动插入两区之间；通道只通行、不计入覆盖率。
 - 保存原始轨迹、采集来源、机器人包络和安全余量；有效几何由统一规则生成。
 - 外边界向内收缩，禁区向外膨胀，通道宽度至少容纳机器人包络和安全余量；避免与现有障碍膨胀重复计算。
 - 兼容现有 `/web/areas` 和旧 YAML；旧地图任务自动转换为新模型。
@@ -22,8 +22,10 @@
 ## 控制、定位与 ROS 接口
 
 - `/teleop/cmd_vel`：网页遥控输入；`/cmd_vel` 由控制仲裁器唯一发布。
-- `/mission/capture/command`：开始、暂停、完成、取消、撤销采集。
+- `/mission/capture/command`：开始、暂停、完成、取消、撤销采集，以及删除指定任务对象。
 - `/mission/capture/state`：采集状态、对象类型、点数、定位状态和错误。
+- `/mission/capture/drive_allowed`：位姿新鲜且定位健康时允许仿真移动；不依赖是否正在采集。
+- `sampling_allowed`：状态消息字段；仅 `capturing/draft` 会记录原始轨迹。
 - `/mission/capture/raw_path`：当前原始轨迹。
 - `/localization/health`：定位健康状态。
 - `/coverage/path_metadata`：覆盖段与跨区通行段元数据。

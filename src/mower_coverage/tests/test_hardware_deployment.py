@@ -88,9 +88,13 @@ def test_simulation_profile_publishes_an_explicit_simulated_rtk_stream():
     assert "'/rtk/gps/fix'" in launch
     assert "'/rtk/status'" in launch
     assert "'cmd_vel_topic': simulation_cmd_vel_topic" in launch
-    assert "'output_topic': simulation_cmd_vel_topic" in launch
+    assert "'output_topic': teleop_cmd_vel_topic" in launch
+    assert "executable='simulation_cmd_mux'" in launch
+    assert "default_value='false'" in launch
+    assert "default_value='/simulation/plan_cmd_vel'" in launch
     assert "'/simulation/cmd_vel'" in launch
     assert "'initial_health_state': 'RED'" in launch
+    assert "'max_linear_speed': 2.0" in launch
 
 
 def test_websocket_url_uses_the_host_serving_the_page():
@@ -101,3 +105,102 @@ def test_websocket_url_uses_the_host_serving_the_page():
     assert 'RTK固定解' not in app
     assert '仿真GNSS' in app
     assert 'RTK天线' in app
+
+
+def test_web_teleop_uses_virtual_joystick_with_speed_control():
+    html = (
+        REPO_ROOT / 'src' / 'mower_coverage' / 'web_frontend'
+        / 'index.html'
+    ).read_text()
+    app = APP_FILE.read_text()
+
+    assert 'id="teleop-joystick"' in html
+    assert 'id="teleop-speed"' in html
+    assert 'max="2.00"' in html
+    assert "name: '/teleop/cmd_vel'" in app
+    assert 'JOYSTICK_DEADZONE' in app
+    assert 'setPointerCapture' in app
+    assert 'lostpointercapture' in app
+    assert 'publishTeleop(0, 0)' in app
+
+
+def test_remote_capture_geometry_fits_map_and_hides_corridor_fields():
+    html = (
+        REPO_ROOT / 'src' / 'mower_coverage' / 'web_frontend'
+        / 'index.html'
+    ).read_text()
+    app = APP_FILE.read_text()
+    start = app.index('function renderMissionItems()')
+    end = app.index('/**\n * 将局部坐标', start)
+    render_function = app[start:end]
+
+    assert '.capture-row[hidden]' in html
+    assert 'map.fitBounds' in render_function
+
+
+def test_remote_capture_has_explicit_planning_handoff():
+    app = APP_FILE.read_text()
+    connection_start = app.index("state.ros.on('connection'")
+    connection_end = app.index("state.ros.on('close'", connection_start)
+    connection_handler = app[connection_start:connection_end]
+
+    assert 'function loadCaptureMissionForPlanning()' in app
+    assert 'btn-capture-load-plan' in app
+    assert 'updateSendButton()' in connection_handler
+
+
+def test_capture_preview_keeps_active_and_draft_routes_visible():
+    app = APP_FILE.read_text()
+
+    assert 'function renderCapturePreview()' in app
+    assert 'active.raw_trajectory' in app
+    assert 'item.raw_trajectory' in app
+    assert '当前没有正在采集的对象' in app
+    assert "if (!active)" in app[app.index('function captureCancel()'):]
+    assert 'captureState.last_error' in app
+    assert "'btn-capture-cancel', !state.connected" in app
+    assert "map.createPane('captureRoutePane')" in app
+    assert 'robot-heading-icon' in app
+    assert 'robot-heading-arrow' in app
+    assert 'function quaternionToHeadingDegrees' in app
+    assert '轨迹未闭合，请回到起点附近' in app
+
+
+def test_capture_feedback_exposes_endpoints_and_closure_threshold():
+    html = (
+        REPO_ROOT / 'src' / 'mower_coverage' / 'web_frontend'
+        / 'index.html'
+    ).read_text()
+    app = APP_FILE.read_text()
+
+    assert 'id="capture-closure-feedback"' in html
+    assert 'activeState === \'capturing\' || activeState === \'draft\'' in app
+    assert 'start_point' in app
+    assert 'end_point' in app
+    assert 'closure_distance' in app
+    assert 'closure_tolerance' in app
+    assert '起点' in app
+    assert '终点' in app
+    assert '闭合阈值' in app
+    assert 'L.circleMarker' in app
+
+
+def test_live_capture_preview_does_not_recenter_the_map_on_each_sample():
+    app = APP_FILE.read_text()
+    start = app.index('function renderCapturePreview()')
+    end = app.index('/**\n * 将局部坐标', start)
+    render_function = app[start:end]
+    normalized = ' '.join(render_function.split())
+
+    assert "active.state === 'ready'" in render_function
+    assert (
+        "if (active.state === 'ready' && "
+        "signature !== state._capturePreviewSignature)" in normalized
+    )
+
+
+def test_capture_failure_and_confirmation_handoff_are_explicit():
+    app = APP_FILE.read_text()
+
+    assert '轨迹不构成有效多边形' in app
+    assert '请点击“确认对象”后载入规划' in app

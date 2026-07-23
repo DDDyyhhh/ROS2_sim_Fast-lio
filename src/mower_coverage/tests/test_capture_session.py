@@ -61,6 +61,52 @@ class CaptureSessionTests(unittest.TestCase):
         self.assertEqual(confirmed['type'], 'work_area')
         self.assertEqual(confirmed['raw_trajectory'], _rectangle_samples())
 
+    def test_snapshot_exposes_closure_feedback_without_synthetic_endpoint(self):
+        session = CaptureSession('area-1', 'work_area', PROFILE)
+        session.start()
+        samples = [
+            _sample(0.0, 0.0, 1.0),
+            _sample(4.0, 0.0, 2.0),
+            _sample(4.0, 3.0, 3.0),
+            _sample(0.0, 3.0, 4.0),
+        ]
+        for sample in samples:
+            session.record_pose(sample)
+
+        snapshot = session.finish('GREEN')
+
+        self.assertEqual(snapshot['state'], 'draft')
+        self.assertEqual(snapshot['start_point'], {'x': 0.0, 'y': 0.0})
+        self.assertEqual(snapshot['end_point'], {'x': 0.0, 'y': 3.0})
+        self.assertAlmostEqual(snapshot['closure_distance'], 3.0)
+        self.assertEqual(snapshot['closure_tolerance'], 0.5)
+        self.assertEqual(snapshot['raw_trajectory'], samples)
+        self.assertEqual(snapshot['geometry'], [])
+
+    def test_closure_at_threshold_becomes_ready_only_after_finish(self):
+        session = CaptureSession('area-1', 'work_area', PROFILE)
+        session.start()
+        samples = [
+            _sample(0.0, 0.0, 1.0),
+            _sample(4.0, 0.0, 2.0),
+            _sample(4.0, 3.0, 3.0),
+            _sample(0.0, 3.0, 4.0),
+            _sample(0.0, 0.5, 5.0),
+        ]
+        for sample in samples:
+            session.record_pose(sample)
+
+        before_finish = session.snapshot()
+
+        self.assertEqual(before_finish['state'], 'capturing')
+        self.assertAlmostEqual(before_finish['closure_distance'], 0.5)
+        self.assertEqual(before_finish['geometry'], [])
+
+        ready = session.finish('GREEN')
+
+        self.assertEqual(ready['state'], 'ready')
+        self.assertEqual(ready['raw_trajectory'], samples)
+
     def test_unhealthy_localization_can_only_be_saved_as_draft(self):
         session = CaptureSession('pond-1', 'no_go_zone', PROFILE)
         session.start()
@@ -187,6 +233,51 @@ class CaptureSessionTests(unittest.TestCase):
         self.assertEqual(session.snapshot()['geometry'], [])
         session.finish('GREEN')
         self.assertEqual(session.confirm('GREEN')['status'], 'confirmed')
+
+    def test_manual_correction_promotes_valid_geometry_and_preserves_raw(self):
+        session = CaptureSession('area-1', 'work_area', PROFILE)
+        session.start()
+        raw_trajectory = [
+            _sample(0.0, 0.0, 1.0),
+            _sample(4.0, 4.0, 2.0),
+            _sample(0.0, 4.0, 3.0),
+            _sample(4.0, 0.0, 4.0),
+            _sample(0.1, 0.1, 5.0),
+        ]
+        for sample in raw_trajectory:
+            session.record_pose(sample)
+
+        self.assertEqual(session.finish('GREEN')['state'], 'draft')
+
+        corrected = [
+            [0.0, 0.0], [4.0, 0.0], [4.0, 3.0],
+            [0.0, 3.0], [0.0, 0.0],
+        ]
+        snapshot = session.set_manual_geometry(corrected)
+
+        self.assertEqual(snapshot['state'], 'ready')
+        self.assertEqual(snapshot['geometry'], corrected)
+        self.assertEqual(snapshot['raw_trajectory'], raw_trajectory)
+        self.assertEqual(session.confirm('GREEN')['geometry'], corrected)
+
+    def test_manual_correction_keeps_self_intersection_fail_closed(self):
+        session = CaptureSession('area-1', 'work_area', PROFILE)
+        session.start()
+        for sample in _rectangle_samples():
+            session.record_pose(sample)
+        self.assertEqual(session.finish('GREEN')['state'], 'ready')
+
+        with self.assertRaisesRegex(ValueError, 'Self-intersection'):
+            session.set_manual_geometry([
+                [0.0, 0.0], [4.0, 4.0], [0.0, 4.0],
+                [4.0, 0.0], [0.0, 0.0],
+            ])
+
+        self.assertEqual(session.state, 'ready')
+        self.assertEqual(session.snapshot()['geometry'], [
+            [0.0, 0.0], [4.0, 0.0], [4.0, 3.0],
+            [0.0, 3.0], [0.0, 0.0],
+        ])
 
 
 if __name__ == '__main__':

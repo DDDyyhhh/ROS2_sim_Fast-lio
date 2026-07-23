@@ -92,6 +92,34 @@ class MissionGeometryTests(unittest.TestCase):
         )
         self.assertEqual(len(result.raw_trajectory), len(trajectory))
 
+    def test_small_sampling_jitter_is_simplified_before_polygon_validation(self):
+        trajectory = [
+            {'x': 0.0, 'y': 0.0, 'localization_ok': True},
+            {'x': 4.0, 'y': 0.0, 'localization_ok': True},
+            {'x': 4.0, 'y': 3.0, 'localization_ok': True},
+            {'x': 2.0, 'y': 3.0, 'localization_ok': True},
+            # A sub-centimetre hand-control wiggle crosses the ideal top edge.
+            {'x': 2.02, 'y': 3.009, 'localization_ok': True},
+            {'x': 2.04, 'y': 2.991, 'localization_ok': True},
+            {'x': 2.06, 'y': 3.0, 'localization_ok': True},
+            {'x': 0.0, 'y': 3.0, 'localization_ok': True},
+            {'x': 0.0, 'y': 0.0, 'localization_ok': True},
+        ]
+
+        result = derive_effective_geometry(
+            trajectory,
+            'work_area',
+            {'closure_tolerance': 0.5, 'simplify_tolerance': 0.01},
+        )
+
+        self.assertEqual(result.status, 'ready')
+        self.assertEqual(
+            result.geometry,
+            ((0.0, 0.0), (4.0, 0.0), (4.0, 3.0),
+             (0.0, 3.0), (0.0, 0.0)),
+        )
+        self.assertEqual(result.raw_trajectory, tuple(trajectory))
+
     def test_localization_failure_keeps_capture_as_draft(self):
         trajectory = [
             {'x': 0.0, 'y': 0.0, 'localization_ok': True},
@@ -110,6 +138,27 @@ class MissionGeometryTests(unittest.TestCase):
         self.assertEqual(result.status, 'draft')
         self.assertEqual(result.geometry, ())
         self.assertIn('localization', result.issues[0])
+
+    def test_self_intersection_reports_a_diagnostic_reason(self):
+        trajectory = [
+            {'x': 0.0, 'y': 0.0, 'localization_ok': True},
+            {'x': 4.0, 'y': 4.0, 'localization_ok': True},
+            {'x': 0.0, 'y': 4.0, 'localization_ok': True},
+            {'x': 4.0, 'y': 0.0, 'localization_ok': True},
+            {'x': 0.1, 'y': 0.1, 'localization_ok': True},
+        ]
+
+        result = derive_effective_geometry(
+            trajectory,
+            'work_area',
+            {'closure_tolerance': 0.5, 'simplify_tolerance': 0.01},
+        )
+
+        self.assertEqual(result.status, 'invalid')
+        self.assertTrue(any(
+            'self-intersection' in issue.lower()
+            for issue in result.issues
+        ))
 
     def test_corridor_keeps_an_open_centerline(self):
         trajectory = [

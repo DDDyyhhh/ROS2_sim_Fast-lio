@@ -45,6 +45,10 @@ class MissionCaptureStore:
         self._require_session()
         return self.session.finish(current_health_state)
 
+    def set_manual_geometry(self, geometry):
+        self._require_session()
+        return self.session.set_manual_geometry(geometry)
+
     def undo(self):
         self._require_session()
         return self.session.undo()
@@ -64,7 +68,21 @@ class MissionCaptureStore:
         item = self.session.confirm(current_health_state)
         self.objects.append(deepcopy(item))
         if item['type'] in {'work_area', 'corridor'}:
-            self.order.append(item['id'])
+            if item['type'] == 'corridor':
+                from_id = item.get('from_work_area_id')
+                to_id = item.get('to_work_area_id')
+                try:
+                    from_index = self.order.index(from_id)
+                    to_index = self.order.index(to_id)
+                except ValueError:
+                    self.order.append(item['id'])
+                else:
+                    if abs(from_index - to_index) == 1:
+                        self.order.insert(max(from_index, to_index), item['id'])
+                    else:
+                        self.order.append(item['id'])
+            else:
+                self.order.append(item['id'])
         self.session = None
         return deepcopy(item)
 
@@ -80,6 +98,48 @@ class MissionCaptureStore:
         result = self.session.cancel()
         self.session = None
         return result
+
+    def delete_object(self, object_id):
+        """Delete one persisted object without breaking mission references."""
+        if self.session is not None:
+            raise RuntimeError('cannot delete while capture is active')
+        if not isinstance(object_id, str) or not object_id:
+            raise ValueError('object id is required')
+
+        matches = [
+            item for item in self.objects + self.drafts
+            if isinstance(item, dict) and item.get('id') == object_id
+        ]
+        if not matches:
+            raise ValueError(f'unknown mission object id: {object_id}')
+
+        item = matches[0]
+        if item.get('type') == 'work_area':
+            dependents = [
+                corridor.get('id') for corridor in self.objects + self.drafts
+                if isinstance(corridor, dict)
+                and corridor.get('type') == 'corridor'
+                and object_id in {
+                    corridor.get('from_work_area_id'),
+                    corridor.get('to_work_area_id'),
+                }
+            ]
+            if dependents:
+                names = ', '.join(str(value) for value in dependents)
+                raise RuntimeError(
+                    f'cannot delete work area {object_id}; '
+                    f'delete dependent corridor(s) first: {names}')
+
+        self.objects = [
+            value for value in self.objects
+            if not isinstance(value, dict) or value.get('id') != object_id
+        ]
+        self.drafts = [
+            value for value in self.drafts
+            if not isinstance(value, dict) or value.get('id') != object_id
+        ]
+        self.order = [value for value in self.order if value != object_id]
+        return deepcopy(item)
 
     def clear(self):
         self.session = None

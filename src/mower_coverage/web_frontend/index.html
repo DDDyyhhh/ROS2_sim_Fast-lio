@@ -43,20 +43,39 @@
         #capture-panel { position: fixed; left: 12px; right: 12px; bottom: 58px; z-index: 900; background: rgba(22,33,62,0.95); border: 1px solid #45618e; border-radius: 8px; padding: 8px 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
         .capture-title { color: #0f9; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
         .capture-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .capture-row[hidden] { display: none !important; }
         .capture-row input, .capture-row select { background: #101a32; color: #eee; border: 1px solid #506b98; border-radius: 4px; padding: 5px 7px; min-width: 90px; }
         .capture-row label { font-size: 12px; color: #ddd; display: inline-flex; align-items: center; gap: 4px; }
         .capture-bottom-row { margin-top: 6px; justify-content: space-between; }
+        .capture-closure-feedback { margin-top: 6px; color: #b9d6ff; font-size: 12px; font-family: monospace; }
+        .capture-recovery { margin-top: 6px; padding: 6px 8px; border: 1px solid #a66b27; border-radius: 5px; background: rgba(90,55,20,0.55); color: #ffe1a8; font-size: 12px; }
+        .capture-recovery[hidden] { display: none !important; }
+        .capture-recovery-message { margin-right: 8px; }
         #capture-state-text { color: #ffcc00; font-size: 12px; min-width: 140px; }
-        #mission-object-list { color: #ddd; font-size: 12px; flex: 1; min-width: 180px; }
-        #teleop-pad { display: grid; grid-template-columns: repeat(3, 36px); grid-template-rows: repeat(3, 30px); gap: 3px; }
-        .teleop-btn { padding: 0; border: 1px solid #6484b8; border-radius: 4px; background: #2a3a5e; color: #fff; cursor: pointer; touch-action: none; user-select: none; }
-        .teleop-btn:nth-child(1) { grid-column: 2; grid-row: 1; }
-        .teleop-btn:nth-child(2) { grid-column: 1; grid-row: 2; }
-        .teleop-btn:nth-child(3) { grid-column: 2; grid-row: 2; }
-        .teleop-btn:nth-child(4) { grid-column: 3; grid-row: 2; }
-        .teleop-btn:nth-child(5) { grid-column: 2; grid-row: 3; }
-        .teleop-btn:active, .teleop-btn.active { background: #0f9; color: #111; }
-        .teleop-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        #mission-object-list { color: #ddd; font-size: 12px; flex: 1; min-width: 180px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .mission-object-entry { display: inline-flex; align-items: center; gap: 4px; background: #2a3a5e; padding: 3px 5px 3px 8px; border-radius: 12px; }
+        .mission-object-delete { padding: 2px 6px; font-size: 11px; }
+        #teleop-pad { display: flex; align-items: center; gap: 10px; }
+        #teleop-joystick { position: relative; width: 128px; height: 128px; flex: 0 0 128px; border: 2px solid #6484b8; border-radius: 50%; background: radial-gradient(circle, #344b78 0 32%, #26385f 33% 68%, #1d2b4b 69%); box-shadow: inset 0 0 0 8px rgba(15,153,255,0.08), 0 2px 8px rgba(0,0,0,0.35); cursor: grab; touch-action: none; user-select: none; }
+        #teleop-joystick::before, #teleop-joystick::after { content: ''; position: absolute; left: 50%; top: 50%; background: rgba(170,200,240,0.35); pointer-events: none; }
+        #teleop-joystick::before { width: 1px; height: 78%; transform: translate(-50%, -50%); }
+        #teleop-joystick::after { width: 78%; height: 1px; transform: translate(-50%, -50%); }
+        #teleop-joystick.disabled { opacity: 0.35; cursor: not-allowed; }
+        #teleop-joystick.active { border-color: #0f9; cursor: grabbing; }
+        #teleop-stick { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; border: 3px solid #fff; border-radius: 50%; background: #0f9; box-shadow: 0 2px 8px rgba(0,0,0,0.45); pointer-events: none; transform: translate(-50%, -50%); }
+        .joystick-hint { position: absolute; color: rgba(255,255,255,0.75); font-size: 10px; pointer-events: none; }
+        .joystick-hint-forward { left: 50%; top: 7px; transform: translateX(-50%); }
+        .joystick-hint-back { left: 50%; bottom: 7px; transform: translateX(-50%); }
+        .joystick-hint-left { left: 8px; top: 50%; transform: translateY(-50%); }
+        .joystick-hint-right { right: 8px; top: 50%; transform: translateY(-50%); }
+        #teleop-settings { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 108px; }
+        #teleop-speed-row { display: flex; justify-content: space-between; gap: 6px; color: #ddd; font-size: 11px; }
+        #teleop-speed { width: 108px; accent-color: #0f9; }
+        #teleop-speed-value { color: #0f9; font-family: monospace; }
+        #teleop-stop { min-width: 76px; touch-action: none; }
+        .robot-heading-icon { position: relative; width: 34px; height: 34px; transform: rotate(0deg); transform-origin: 50% 50%; }
+        .robot-heading-body { position: absolute; left: 6px; top: 6px; width: 22px; height: 22px; background: #ff2222; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 8px rgba(255,34,34,0.85), 0 0 16px rgba(255,34,34,0.35); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; color: white; animation: pulse-robot 1.5s ease-in-out infinite; }
+        .robot-heading-arrow { position: absolute; left: 14px; top: 0; width: 0; height: 0; border-left: 3px solid transparent; border-right: 3px solid transparent; border-bottom: 10px solid #ffcc00; filter: drop-shadow(0 0 2px #111); opacity: 0; z-index: 2; }
         .rtk-marker, .sim-marker { font-size: 12px; font-weight: 700; white-space: nowrap; }
         @media (max-width: 600px) {
             #header h1 { font-size: 14px; }
@@ -101,6 +120,7 @@
             <button id="btn-capture-draft" class="btn btn-warning" disabled>📝 保存草稿</button>
             <button id="btn-capture-confirm" class="btn btn-primary" disabled>✅ 确认对象</button>
             <button id="btn-capture-cancel" class="btn btn-danger" disabled>✖ 取消</button>
+            <button id="btn-capture-load-plan" class="btn btn-secondary" disabled>📐 载入规划</button>
         </div>
         <div id="corridor-fields" class="capture-row" hidden>
             <label>通道宽度 <input id="corridor-width" type="number" min="0.1" step="0.1" value="1.0"></label>
@@ -111,13 +131,32 @@
         <div class="capture-row capture-bottom-row">
             <div id="capture-state-text">未开始采集</div>
             <div id="mission-object-list">暂无已确认对象</div>
-            <div id="teleop-pad" aria-label="方向遥控">
-                <button class="teleop-btn" data-linear="0.35" data-angular="0" aria-label="前进">▲</button>
-                <button class="teleop-btn" data-linear="0" data-angular="0.9" aria-label="左转">◀</button>
-                <button id="teleop-stop" class="teleop-btn teleop-stop" data-linear="0" data-angular="0" aria-label="停止">■</button>
-                <button class="teleop-btn" data-linear="0" data-angular="-0.9" aria-label="右转">▶</button>
-                <button class="teleop-btn" data-linear="-0.25" data-angular="0" aria-label="后退">▼</button>
+            <div id="teleop-pad" aria-label="方向摇杆">
+                <div id="teleop-joystick" role="application" aria-label="虚拟摇杆" aria-disabled="true">
+                    <span class="joystick-hint joystick-hint-forward">前</span>
+                    <span class="joystick-hint joystick-hint-back">后</span>
+                    <span class="joystick-hint joystick-hint-left">左</span>
+                    <span class="joystick-hint joystick-hint-right">右</span>
+                    <div id="teleop-stick"></div>
+                </div>
+                <div id="teleop-settings">
+                    <div id="teleop-speed-row">
+                        <span>速度</span>
+                        <output id="teleop-speed-value" for="teleop-speed">0.60 m/s</output>
+                    </div>
+                    <input id="teleop-speed" type="range" min="0.20" max="2.00" step="0.05" value="0.60" aria-label="最大前进速度">
+                    <button id="teleop-stop" class="btn btn-danger" aria-label="停止">■ 停止</button>
+                </div>
             </div>
+        </div>
+        <div id="capture-closure-feedback" class="capture-closure-feedback" aria-live="polite">
+            起点 -- · 终点 -- · 闭合距离 -- · 闭合阈值 --
+        </div>
+        <div id="capture-recovery" class="capture-recovery" hidden aria-live="polite">
+            <span id="capture-recovery-message" class="capture-recovery-message"></span>
+            <button id="btn-capture-retry" class="btn btn-warning" disabled>↻ 重新采集</button>
+            <button id="btn-capture-manual-correct" class="btn btn-secondary" disabled>✎ 手动修正</button>
+            <button id="btn-capture-correction-cancel" class="btn btn-danger" hidden>✖ 取消修正</button>
         </div>
     </section>
 
